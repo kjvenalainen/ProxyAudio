@@ -1,0 +1,7 @@
+---
+description: Do not try to create build scripts.
+globs:
+alwaysApply: true
+---
+
+The project is built with xcode. Prompt the user if needed to add files to the xcode project.

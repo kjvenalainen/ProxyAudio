@@ -1,0 +1,7 @@
+---
+description: Don't write summary markdown files.
+globs:
+alwaysApply: true
+---
+
+Don't write out summary files at the end of prompts.
