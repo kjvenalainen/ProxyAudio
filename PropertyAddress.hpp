@@ -1,10 +1,10 @@
-/*
-See the LICENSE.txt file for this sample's licensing information.
+// SPDX-License-Identifier: MIT
+//
+// Copyright (c) 2025 Tapturtle
+//
+// See the LICENSE.txt file for licensing information.
 
-Abstract:
-Property address inheriting from AudioObjectPropertyAddress for seamless
-integration.
-*/
+#pragma once
 
 #pragma once
 
@@ -16,37 +16,40 @@ namespace ProxyAudio {
 // Property System
 //==================================================================================================
 
-class PropertyAddress : public AudioObjectPropertyAddress {
-public:
+class PropertyAddress {
+ public:
   // Constructor from AudioObjectPropertyAddress directly
-  constexpr PropertyAddress(const AudioObjectPropertyAddress &address)
-      : AudioObjectPropertyAddress(address) {}
+  constexpr PropertyAddress(const AudioObjectPropertyAddress& address)
+      : address_(address) {}
 
   // Constructor from pointer to AudioObjectPropertyAddress
-  PropertyAddress(const AudioObjectPropertyAddress *address)
-      : AudioObjectPropertyAddress(address ? *address
-                                           : AudioObjectPropertyAddress{}) {}
+  PropertyAddress(const AudioObjectPropertyAddress* address)
+      : address_(address ? *address : AudioObjectPropertyAddress{}) {}
 
   // Convenient accessors (can also use mSelector, mScope, mElement directly)
-  constexpr AudioObjectPropertySelector GetSelector() const noexcept {
-    return mSelector;
+  constexpr AudioObjectPropertySelector Selector() const noexcept {
+    return address_.mSelector;
   }
-  constexpr AudioObjectPropertyScope GetScope() const noexcept {
-    return mScope;
+  constexpr AudioObjectPropertyScope Scope() const noexcept {
+    return address_.mScope;
   }
-  constexpr AudioObjectPropertyElement GetElement() const noexcept {
-    return mElement;
+  constexpr AudioObjectPropertyElement Element() const noexcept {
+    return address_.mElement;
   }
 
   // Get reference to base class (for compatibility)d
-  constexpr const AudioObjectPropertyAddress &Get() const noexcept {
-    return *this;
+  constexpr const AudioObjectPropertyAddress& Get() const noexcept {
+    return address_;
   }
 
   constexpr bool operator==(const PropertyAddress &other) const noexcept {
-    return mSelector == other.mSelector && mScope == other.mScope &&
-           mElement == other.mElement;
+    return address_.mSelector == other.address_.mSelector &&
+           address_.mScope == other.address_.mScope &&
+           address_.mElement == other.address_.mElement;
   }
+
+ private:
+  AudioObjectPropertyAddress address_;
 };
 
 } // namespace ProxyAudio
