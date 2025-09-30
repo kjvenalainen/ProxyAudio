@@ -9,6 +9,7 @@
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <MacTypes.h>
 
+#include "Error.hpp"
 #include "PlugInDriverInterface.hpp"
 
 // The global AudioServerPlugInDriverInterface object for ProxyAudio.
@@ -36,6 +37,30 @@ class ProxyDriverInterface
   HRESULT QueryInterface(REFIID inUUID, LPVOID* outInterface) {
     return gAudioServerPlugInDriverInterface.QueryInterface(
         gAudioServerPlugInDriverRef, inUUID, outInterface);
+
+    // if (outInterface == nullptr) {
+    //   throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+    //                       "No place to store the returned interface");
+    // }
+
+    // const auto requestedUUID = CFUUIDCreateFromUUIDBytes(NULL, inUUID);
+
+    // if (requestedUUID == nullptr) {
+    //   throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+    //                       "Failed to create the CFUUIDRef");
+    // }
+
+    // if (CFEqual(requestedUUID, IUnknownUUID) ||
+    //     CFEqual(requestedUUID, kAudioServerPlugInDriverInterfaceUUID)) {
+    //   *outInterface = GetDriverRef();
+    // } else {
+    //   throw ErrorWithCode(E_NOINTERFACE, "Requested interface not
+    //   supported");
+    // }
+
+    // CFRelease(requestedUUID);
+
+    // return S_OK;
   }
 
   ULONG AddRef() {

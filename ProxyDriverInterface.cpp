@@ -25,11 +25,12 @@ void* ProxyDriverInterfaceCreate(CFAllocatorRef inAllocator,
   // the driver's AudioServerPlugInDriverInterface.
 
 #pragma unused(inAllocator)
-  void* theAnswer = NULL;
-  if (CFEqual(inRequestedTypeUUID, kAudioServerPlugInTypeUUID)) {
-    theAnswer = ProxyAudio::ProxyDriverInterface::GetInstance().GetDriverRef();
+
+  if (!CFEqual(inRequestedTypeUUID, kAudioServerPlugInTypeUUID)) {
+    return nullptr;
   }
-  return theAnswer;
+
+  return ProxyAudio::ProxyDriverInterface::GetInstance().GetDriverRef();
 }
 
 #ifdef __cplusplus

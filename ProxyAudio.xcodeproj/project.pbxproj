@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		50318F3B2E8B4DC300966CF5 /* ProxyDriverInterface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 50318F3A2E8B4DC300966CF5 /* ProxyDriverInterface.cpp */; };
 		503560D62E7A650A00F4DBB6 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 503560D52E7A650A00F4DBB6 /* CoreFoundation.framework */; };
+		503560D82E7A678400F4DBB7 /* ProxyAudio.c in Sources */ = {isa = PBXBuildFile; fileRef = 503560D82E7A678400F4DBB6 /* ProxyAudio.c */; };
 		503560F92E7A7CBC00F4DBB6 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 503560F42E7A7CBC00F4DBB6 /* README.md */; };
 /* End PBXBuildFile section */
 
@@ -143,6 +144,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				50318F3B2E8B4DC300966CF5 /* ProxyDriverInterface.cpp in Sources */,
+				503560D82E7A678400F4DBB7 /* ProxyAudio.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

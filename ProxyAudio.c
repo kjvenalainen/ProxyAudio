@@ -231,7 +231,7 @@ static OSStatus		NullAudio_SetControlPropertyData(AudioServerPlugInDriverRef inD
 
 #pragma mark The Interface
 
-static AudioServerPlugInDriverInterface	gAudioServerPlugInDriverInterface =
+AudioServerPlugInDriverInterface	gAudioServerPlugInDriverInterface =
 {
 	NULL,
 	NullAudio_QueryInterface,
@@ -257,8 +257,8 @@ static AudioServerPlugInDriverInterface	gAudioServerPlugInDriverInterface =
 	NullAudio_DoIOOperation,
 	NullAudio_EndIOOperation
 };
-static AudioServerPlugInDriverInterface*	gAudioServerPlugInDriverInterfacePtr	= &gAudioServerPlugInDriverInterface;
-static AudioServerPlugInDriverRef			gAudioServerPlugInDriverRef				= &gAudioServerPlugInDriverInterfacePtr;
+AudioServerPlugInDriverInterface*	gAudioServerPlugInDriverInterfacePtr	= &gAudioServerPlugInDriverInterface;
+AudioServerPlugInDriverRef			gAudioServerPlugInDriverRef				= &gAudioServerPlugInDriverInterfacePtr;
 
 #pragma mark Factory
 
