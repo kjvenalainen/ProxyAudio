@@ -8,10 +8,16 @@
 
 #include <CoreAudio/AudioServerPlugIn.h>
 
-#include "Error.hpp"
 #include "Utils.hpp"
 
 namespace ProxyAudio {
+
+// Whether to log the calls to the static functions.
+constexpr static bool ENABLE_STATIC_LOGGING = true;
+#define LogStatic(inFormat, ...)         \
+  if constexpr (ENABLE_STATIC_LOGGING) { \
+    Log(inFormat, ##__VA_ARGS__);        \
+  }
 
 template <class T>
 class PlugInDriverInterface {
@@ -32,8 +38,6 @@ class PlugInDriverInterface {
     auto& driver = *reinterpret_cast<T*>(reinterpret_cast<UInt8*>(inDriverRef) -
                                          offsetof(T, interfacePtr_));
 
-    Log("Driver: %p", &driver);
-
     return driver;
   }
 
@@ -48,22 +52,30 @@ class PlugInDriverInterface {
   static HRESULT StaticQueryInterface(void* inDriver,
                                       REFIID inUUID,
                                       LPVOID* outInterface) {
+    LogStatic("StaticQueryInterface [driver: %p]", inDriver);
+
     return GetDriver(reinterpret_cast<AudioServerPlugInDriverRef>(inDriver))
         .QueryInterface(inUUID, outInterface);
   }
 
   static ULONG StaticAddRef(void* inDriver) {
+    LogStatic("StaticAddRef [driver: %p]", inDriver);
+
     return GetDriver(reinterpret_cast<AudioServerPlugInDriverRef>(inDriver))
         .AddRef();
   }
 
   static ULONG StaticRelease(void* inDriver) {
+    LogStatic("StaticRelease [driver: %p]", inDriver);
+
     return GetDriver(reinterpret_cast<AudioServerPlugInDriverRef>(inDriver))
         .Release();
   }
 
   static HRESULT StaticInitialize(AudioServerPlugInDriverRef inDriver,
                                   AudioServerPlugInHostRef inHost) {
+    LogStatic("StaticInitialize [driver: %p]", inDriver);
+
     return GetDriver(inDriver).Initialize(inHost);
   }
 
@@ -72,12 +84,16 @@ class PlugInDriverInterface {
       CFDictionaryRef inDescription,
       const AudioServerPlugInClientInfo* inClientInfo,
       AudioObjectID* outDeviceObjectID) {
+    LogStatic("StaticCreateDevice [driver: %p]", inDriver);
+
     return GetDriver(inDriver).CreateDevice(inDescription, inClientInfo,
                                             outDeviceObjectID);
   }
 
   static OSStatus StaticDestroyDevice(AudioServerPlugInDriverRef inDriver,
                                       AudioObjectID inDeviceObjectID) {
+    LogStatic("StaticDestroyDevice [driver: %p]", inDriver);
+
     return GetDriver(inDriver).DestroyDevice(inDeviceObjectID);
   }
 
@@ -85,6 +101,8 @@ class PlugInDriverInterface {
       AudioServerPlugInDriverRef inDriver,
       AudioObjectID inDeviceObjectID,
       const AudioServerPlugInClientInfo* inClientInfo) {
+    LogStatic("StaticAddDeviceClient [driver: %p]", inDriver);
+
     return GetDriver(inDriver).AddDeviceClient(inDeviceObjectID, inClientInfo);
   }
 
@@ -92,6 +110,8 @@ class PlugInDriverInterface {
       AudioServerPlugInDriverRef inDriver,
       AudioObjectID inDeviceObjectID,
       const AudioServerPlugInClientInfo* inClientInfo) {
+    LogStatic("StaticRemoveDeviceClient [driver: %p]", inDriver);
+
     return GetDriver(inDriver).RemoveDeviceClient(inDeviceObjectID,
                                                   inClientInfo);
   }
@@ -101,6 +121,8 @@ class PlugInDriverInterface {
       AudioObjectID inDeviceObjectID,
       UInt64 inChangeAction,
       void* inChangeInfo) {
+    LogStatic("StaticPerformDeviceConfigurationChange [driver: %p]", inDriver);
+
     return GetDriver(inDriver).PerformDeviceConfigurationChange(
         inDeviceObjectID, inChangeAction, inChangeInfo);
   }
@@ -110,6 +132,8 @@ class PlugInDriverInterface {
       AudioObjectID inDeviceObjectID,
       UInt64 inChangeAction,
       void* inChangeInfo) {
+    LogStatic("StaticAbortDeviceConfigurationChange [driver: %p]", inDriver);
+
     return GetDriver(inDriver).AbortDeviceConfigurationChange(
         inDeviceObjectID, inChangeAction, inChangeInfo);
   }
@@ -119,6 +143,8 @@ class PlugInDriverInterface {
       AudioObjectID inObjectID,
       pid_t inClientProcessID,
       const AudioObjectPropertyAddress* inAddress) {
+    LogStatic("StaticHasProperty [driver: %p]", inDriver);
+
     return GetDriver(inDriver).HasProperty(inObjectID, inClientProcessID,
                                            inAddress);
   }
@@ -129,6 +155,8 @@ class PlugInDriverInterface {
       pid_t inClientProcessID,
       const AudioObjectPropertyAddress* inAddress,
       Boolean* outIsSettable) {
+    LogStatic("StaticIsPropertySettable [driver: %p]", inDriver);
+
     return GetDriver(inDriver).IsPropertySettable(inObjectID, inClientProcessID,
                                                   inAddress, outIsSettable);
   }
@@ -141,6 +169,8 @@ class PlugInDriverInterface {
       UInt32 inQualifierDataSize,
       const void* inQualifierData,
       UInt32* outDataSize) {
+    LogStatic("StaticGetPropertyDataSize [driver: %p]", inDriver);
+
     return GetDriver(inDriver).GetPropertyDataSize(
         inObjectID, inClientProcessID, inAddress, inQualifierDataSize,
         inQualifierData, outDataSize);
@@ -156,6 +186,8 @@ class PlugInDriverInterface {
       UInt32 inDataSize,
       UInt32* outDataSize,
       void* outData) {
+    LogStatic("StaticGetPropertyData [driver: %p]", inDriver);
+
     return GetDriver(inDriver).GetPropertyData(
         inObjectID, inClientProcessID, inAddress, inQualifierDataSize,
         inQualifierData, inDataSize, outDataSize, outData);
@@ -170,6 +202,8 @@ class PlugInDriverInterface {
       const void* inQualifierData,
       UInt32 inDataSize,
       const void* inData) {
+    LogStatic("StaticSetPropertyData [driver: %p]", inDriver);
+
     return GetDriver(inDriver).SetPropertyData(
         inObjectID, inClientProcessID, inAddress, inQualifierDataSize,
         inQualifierData, inDataSize, inData);
@@ -178,12 +212,16 @@ class PlugInDriverInterface {
   static OSStatus StaticStartIO(AudioServerPlugInDriverRef inDriver,
                                 AudioObjectID inDeviceObjectID,
                                 UInt32 inClientID) {
+    LogStatic("StaticStartIO [driver: %p]", inDriver);
+
     return GetDriver(inDriver).StartIO(inDeviceObjectID, inClientID);
   }
 
   static OSStatus StaticStopIO(AudioServerPlugInDriverRef inDriver,
                                AudioObjectID inDeviceObjectID,
                                UInt32 inClientID) {
+    LogStatic("StaticStopIO [driver: %p]", inDriver);
+
     return GetDriver(inDriver).StopIO(inDeviceObjectID, inClientID);
   }
 
@@ -193,6 +231,8 @@ class PlugInDriverInterface {
                                          Float64* outSampleTime,
                                          UInt64* outHostTime,
                                          UInt64* outSeed) {
+    LogStatic("StaticGetZeroTimeStamp [driver: %p]", inDriver);
+
     return GetDriver(inDriver).GetZeroTimeStamp(
         inDeviceObjectID, inClientID, outSampleTime, outHostTime, outSeed);
   }
@@ -203,6 +243,8 @@ class PlugInDriverInterface {
                                           UInt32 inOperationID,
                                           Boolean* outWillDo,
                                           Boolean* outWillDoInPlace) {
+    LogStatic("StaticWillDoIOOperation [driver: %p]", inDriver);
+
     return GetDriver(inDriver).WillDoIOOperation(inDeviceObjectID, inClientID,
                                                  inOperationID, outWillDo,
                                                  outWillDoInPlace);
@@ -215,6 +257,8 @@ class PlugInDriverInterface {
       UInt32 inOperationID,
       UInt32 inIOBufferFrameSize,
       const AudioServerPlugInIOCycleInfo* inIOCycleInfo) {
+    LogStatic("StaticBeginIOOperation [driver: %p]", inDriver);
+
     return GetDriver(inDriver).BeginIOOperation(
         inDeviceObjectID, inClientID, inOperationID, inIOBufferFrameSize,
         inIOCycleInfo);
@@ -230,6 +274,8 @@ class PlugInDriverInterface {
       const AudioServerPlugInIOCycleInfo* inIOCycleInfo,
       void* ioMainBuffer,
       void* ioSecondaryBuffer) {
+    LogStatic("StaticDoIOOperation [driver: %p]", inDriver);
+
     return GetDriver(inDriver).DoIOOperation(
         inDeviceObjectID, inStreamObjectID, inClientID, inOperationID,
         inIOBufferFrameSize, inIOCycleInfo, ioMainBuffer, ioSecondaryBuffer);
@@ -242,6 +288,8 @@ class PlugInDriverInterface {
       UInt32 inOperationID,
       UInt32 inIOBufferFrameSize,
       const AudioServerPlugInIOCycleInfo* inIOCycleInfo) {
+    LogStatic("StaticEndIOOperation [driver: %p]", inDriver);
+
     return GetDriver(inDriver).EndIOOperation(
         inDeviceObjectID, inClientID, inOperationID, inIOBufferFrameSize,
         inIOCycleInfo);

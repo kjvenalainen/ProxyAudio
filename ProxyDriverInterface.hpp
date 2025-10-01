@@ -9,6 +9,8 @@
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <CoreFoundation/CFUUID.h>
 #include <MacTypes.h>
+#include <mach/kern_return.h>
+#include <mach/mach_time.h>
 
 #include "CFSharedPtr.hpp"
 #include "Error.hpp"
@@ -30,6 +32,8 @@ void* ProxyDriverInterfaceCreate(CFAllocatorRef inAllocator,
 #endif
 
 namespace ProxyAudio {
+
+constexpr float SAMPLE_RATE = 48000.0f;
 
 class ProxyDriverInterface
     : public PlugInDriverInterface<ProxyDriverInterface> {
@@ -74,8 +78,6 @@ class ProxyDriverInterface
   ULONG AddRef() {
     gAudioServerPlugInDriverInterface.AddRef(gAudioServerPlugInDriverRef);
 
-    Log("Count: %u", refCount_.load());
-
     if (refCount_ < UINT32_MAX) {
       refCount_++;
     }
@@ -86,8 +88,6 @@ class ProxyDriverInterface
   ULONG Release() {
     gAudioServerPlugInDriverInterface.Release(gAudioServerPlugInDriverRef);
 
-    Log("Count: %u", refCount_.load());
-
     if (refCount_ > 0) {
       refCount_--;
     }
@@ -96,33 +96,98 @@ class ProxyDriverInterface
   }
 
   HRESULT Initialize(AudioServerPlugInHostRef inHost) {
-    return gAudioServerPlugInDriverInterface.Initialize(
-        gAudioServerPlugInDriverRef, inHost);
+    try {
+      // The job of this method is, as the name implies, to get the
+      // driver initialized. One specific thing that needs to be done is to
+      // store the AudioServerPlugInHostRef so that it can be used 	later.
+      // Note that when this call returns, the HAL will scan the various lists
+      // the driver maintains (such as the device list) to get the inital set of
+      // objects the driver is 	publishing. So, there is no need to notifiy the
+      // HAL about any objects created as part of the execution of this method.
+      Log("Initializing");
+
+      host_ = inHost;
+
+      // TODO: Do we really need a box acquired property?
+
+      // TODO: Load settings using `Host->CopyFromStorage`.
+
+      // Calculate the host ticks per frame
+      struct mach_timebase_info timebaseInfo;
+      if (KERN_SUCCESS != mach_timebase_info(&timebaseInfo)) {
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "Failed to get mach_timebase_info");
+      }
+
+      const auto theHostClockFrequency =
+          static_cast<double>(timebaseInfo.denom) /
+          static_cast<double>(timebaseInfo.numer) * 1000000000.0;
+      hostTicksPerFrame_ = theHostClockFrequency / SAMPLE_RATE;
+
+      // TODO: Remove this.
+      gAudioServerPlugInDriverInterface.Initialize(gAudioServerPlugInDriverRef,
+                                                   inHost);
+
+      return S_OK;
+    } catch (const ErrorWithCode& e) {
+      e.log();
+      return e.code();
+    }
   }
 
   OSStatus CreateDevice(CFDictionaryRef inDescription,
                         const AudioServerPlugInClientInfo* inClientInfo,
                         AudioObjectID* outDeviceObjectID) {
-    return gAudioServerPlugInDriverInterface.CreateDevice(
-        gAudioServerPlugInDriverRef, inDescription, inClientInfo,
-        outDeviceObjectID);
+    // This method is used to tell a driver that implements the Transport
+    // Manager semantics to create an AudioEndpointDevice from a set of
+    // AudioEndpoints. Since this driver is not a Transport Manager, we just
+    // check the arguments and return kAudioHardwareUnsupportedOperationError.
+
+#pragma unused(inDescription, inClientInfo, outDeviceObjectID)
+
+    return kAudioHardwareUnsupportedOperationError;
   }
 
   OSStatus DestroyDevice(AudioObjectID inDeviceObjectID) {
-    return gAudioServerPlugInDriverInterface.DestroyDevice(
-        gAudioServerPlugInDriverRef, inDeviceObjectID);
+    // This method is used to tell a driver that implements the Transport
+    // Manager semantics to destroy an AudioEndpointDevice. Since this driver is
+    // not a Transport Manager, we just check the arguments and return
+    // kAudioHardwareUnsupportedOperationError.
+
+#pragma unused(inDeviceObjectID)
+
+    return kAudioHardwareUnsupportedOperationError;
   }
 
   OSStatus AddDeviceClient(AudioObjectID inDeviceObjectID,
                            const AudioServerPlugInClientInfo* inClientInfo) {
-    return gAudioServerPlugInDriverInterface.AddDeviceClient(
-        gAudioServerPlugInDriverRef, inDeviceObjectID, inClientInfo);
+    // This method is used to inform the driver about a new client that is using
+    // the given device.
+    // This allows the device to act differently depending on who the client is.
+    // This driver does not need to track the clients using the device, so we
+    // just check the arguments and return successfully.
+
+#pragma unused(inClientInfo)
+
+    // TODO: Validate that the inDeviceObjectID corresponds to one of our
+    // devices.
+
+    return S_OK;
   }
 
   OSStatus RemoveDeviceClient(AudioObjectID inDeviceObjectID,
                               const AudioServerPlugInClientInfo* inClientInfo) {
-    return gAudioServerPlugInDriverInterface.RemoveDeviceClient(
-        gAudioServerPlugInDriverRef, inDeviceObjectID, inClientInfo);
+    // This method is used to inform the driver about a client that is no longer
+    // using the given
+    // device. This driver does not track clients, so we just check the
+    // arguments and return successfully.
+
+#pragma unused(inClientInfo)
+
+    // TODO: Validate that the inDeviceObjectID corresponds to one of our
+    // devices.
+
+    return S_OK;
   }
 
   OSStatus PerformDeviceConfigurationChange(AudioObjectID inDeviceObjectID,
@@ -258,10 +323,12 @@ class ProxyDriverInterface
   }
 
  protected:
-  ProxyDriverInterface() : refCount_(1U) {}
+  ProxyDriverInterface() = default;
 
  private:
-  std::atomic<ULONG> refCount_;
+  std::atomic<ULONG> refCount_ = 1U;
+  AudioServerPlugInHostRef host_ = nullptr;
+  double hostTicksPerFrame_ = 0.0f;
 };
 
 }  // namespace ProxyAudio
