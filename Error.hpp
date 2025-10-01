@@ -8,7 +8,10 @@
 
 #include <cstdint>
 #include <exception>
+#include <sstream>
 #include <string>
+
+#include "Utils.hpp"
 
 namespace ProxyAudio {
 
@@ -21,10 +24,16 @@ class ErrorWithCode : public std::exception {
 
   uint32_t code() const noexcept { return code_; }
 
+  void log() const noexcept { Log("%{public}s", what()); }
+
  private:
   std::string FormatMessage(const std::string& message) const {
-    return message + ((message.length() > 0U) ? " " : "") + "(" +
-           std::to_string(code_) + ")";
+    std::stringstream ss;
+
+    ss << message << ((message.length() > 0U) ? " " : "") << "("
+       << "0x" << std::hex << std::uppercase << code_ << ")";
+
+    return ss.str();
   }
 
   uint32_t code_;

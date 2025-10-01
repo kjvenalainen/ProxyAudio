@@ -7,8 +7,10 @@
 #pragma once
 
 #include <CoreAudio/AudioServerPlugIn.h>
+#include <CoreFoundation/CFUUID.h>
 #include <MacTypes.h>
 
+#include "CFSharedPtr.hpp"
 #include "Error.hpp"
 #include "PlugInDriverInterface.hpp"
 
@@ -31,46 +33,66 @@ namespace ProxyAudio {
 
 class ProxyDriverInterface
     : public PlugInDriverInterface<ProxyDriverInterface> {
+  friend PlugInDriverInterface<ProxyDriverInterface>;
+
  public:
-  ~ProxyDriverInterface() = default;
+  virtual ~ProxyDriverInterface() override = default;
 
   HRESULT QueryInterface(REFIID inUUID, LPVOID* outInterface) {
-    return gAudioServerPlugInDriverInterface.QueryInterface(
-        gAudioServerPlugInDriverRef, inUUID, outInterface);
+    try {
+      if (outInterface == nullptr) {
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "No place to store the returned interface");
+      }
 
-    // if (outInterface == nullptr) {
-    //   throw ErrorWithCode(kAudioHardwareIllegalOperationError,
-    //                       "No place to store the returned interface");
-    // }
+      const auto requestedUUID =
+          CFSharedPtr(CFUUIDCreateFromUUIDBytes(NULL, inUUID));
 
-    // const auto requestedUUID = CFUUIDCreateFromUUIDBytes(NULL, inUUID);
+      if (requestedUUID == nullptr) {
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "Failed to create the CFUUIDRef");
+      }
 
-    // if (requestedUUID == nullptr) {
-    //   throw ErrorWithCode(kAudioHardwareIllegalOperationError,
-    //                       "Failed to create the CFUUIDRef");
-    // }
+      if (requestedUUID == IUnknownUUID ||
+          requestedUUID == kAudioServerPlugInDriverInterfaceUUID) {
+        *outInterface = GetDriverRef();
+      } else {
+        throw ErrorWithCode(E_NOINTERFACE, "Requested interface not supported");
+      }
 
-    // if (CFEqual(requestedUUID, IUnknownUUID) ||
-    //     CFEqual(requestedUUID, kAudioServerPlugInDriverInterfaceUUID)) {
-    //   *outInterface = GetDriverRef();
-    // } else {
-    //   throw ErrorWithCode(E_NOINTERFACE, "Requested interface not
-    //   supported");
-    // }
+      // TODO: Remove this.
+      gAudioServerPlugInDriverInterface.QueryInterface(
+          gAudioServerPlugInDriverRef, inUUID, outInterface);
 
-    // CFRelease(requestedUUID);
-
-    // return S_OK;
+      return S_OK;
+    } catch (const ErrorWithCode& e) {
+      e.log();
+      return e.code();
+    }
   }
 
   ULONG AddRef() {
-    return gAudioServerPlugInDriverInterface.AddRef(
-        gAudioServerPlugInDriverRef);
+    gAudioServerPlugInDriverInterface.AddRef(gAudioServerPlugInDriverRef);
+
+    Log("Count: %u", refCount_.load());
+
+    if (refCount_ < UINT32_MAX) {
+      refCount_++;
+    }
+
+    return refCount_.load();
   }
 
   ULONG Release() {
-    return gAudioServerPlugInDriverInterface.Release(
-        gAudioServerPlugInDriverRef);
+    gAudioServerPlugInDriverInterface.Release(gAudioServerPlugInDriverRef);
+
+    Log("Count: %u", refCount_.load());
+
+    if (refCount_ > 0) {
+      refCount_--;
+    }
+
+    return refCount_.load();
   }
 
   HRESULT Initialize(AudioServerPlugInHostRef inHost) {
@@ -236,7 +258,10 @@ class ProxyDriverInterface
   }
 
  protected:
-  ProxyDriverInterface() = default;
+  ProxyDriverInterface() : refCount_(1U) {}
+
+ private:
+  std::atomic<ULONG> refCount_;
 };
 
 }  // namespace ProxyAudio

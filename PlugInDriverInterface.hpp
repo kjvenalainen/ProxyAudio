@@ -9,6 +9,7 @@
 #include <CoreAudio/AudioServerPlugIn.h>
 
 #include "Error.hpp"
+#include "Utils.hpp"
 
 namespace ProxyAudio {
 
@@ -21,16 +22,19 @@ class PlugInDriverInterface {
 
   // Gets the driver instance.
   static T& GetInstance() {
-    static Derived instance;
+    static T instance;
     return instance;
   }
 
-  // Gets the driver instance from an AudioServerPlugInDriverRef.
+  // Asserts that the provided reference points to the single instance of the
+  // driver and returns a reference to it.
   static T& GetDriver(const AudioServerPlugInDriverRef& inDriverRef) {
-    AudioServerPlugInDriverInterface* driverInterface = *inDriverRef;
+    auto& driver = *reinterpret_cast<T*>(reinterpret_cast<UInt8*>(inDriverRef) -
+                                         offsetof(T, interfacePtr_));
 
-    return *reinterpret_cast<T*>(reinterpret_cast<UInt8*>(driverInterface) -
-                                 offsetof(Self, interfacePtr_));
+    Log("Driver: %p", &driver);
+
+    return driver;
   }
 
   // Gets the driver ref from the driver instance.
@@ -44,14 +48,8 @@ class PlugInDriverInterface {
   static HRESULT StaticQueryInterface(void* inDriver,
                                       REFIID inUUID,
                                       LPVOID* outInterface) {
-    try {
-      return GetDriver(reinterpret_cast<AudioServerPlugInDriverRef>(inDriver))
-          .QueryInterface(inUUID, outInterface);
-    } catch (const ErrorWithCode& e) {
-      printf("Error %s\n", e.what());
-
-      return e.code();
-    }
+    return GetDriver(reinterpret_cast<AudioServerPlugInDriverRef>(inDriver))
+        .QueryInterface(inUUID, outInterface);
   }
 
   static ULONG StaticAddRef(void* inDriver) {
@@ -250,11 +248,6 @@ class PlugInDriverInterface {
   }
 
  protected:
-  // Helper to access protected constructor.
-  struct Derived : public T {
-    Derived() : T() {}
-  };
-
   PlugInDriverInterface()
       : interface_{
             ._reserved = nullptr,

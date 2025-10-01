@@ -1,136 +1,134 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Build ProxyAudio",
-            "type": "shell",
-            "command": "xcodebuild",
-            "args": [
-                "-project",
-                "ProxyAudio.xcodeproj",
-                "-target",
-                "ProxyAudio",
-                "-configuration",
-                "Debug",
-                "build",
-                "CODE_SIGN_IDENTITY=",
-                "CODE_SIGNING_REQUIRED=NO"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "problemMatcher": {
-                "owner": "xcode",
-                "fileLocation": ["relative", "${workspaceFolder}"],
-                "pattern": {
-                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "severity": 4,
-                    "message": 5
-                }
-            }
-        },
-        {
-            "label": "Build ProxyAudio (Release)",
-            "type": "shell",
-            "command": "xcodebuild",
-            "args": [
-                "-project",
-                "ProxyAudio.xcodeproj",
-                "-target",
-                "ProxyAudio",
-                "-configuration",
-                "Release",
-                "build",
-                "CODE_SIGN_IDENTITY=",
-                "CODE_SIGNING_REQUIRED=NO"
-            ],
-            "group": "build",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "problemMatcher": {
-                "owner": "xcode",
-                "fileLocation": ["relative", "${workspaceFolder}"],
-                "pattern": {
-                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "severity": 4,
-                    "message": 5
-                }
-            }
-        },
-        {
-            "label": "Clean ProxyAudio",
-            "type": "shell",
-            "command": "xcodebuild",
-            "args": [
-                "-project",
-                "ProxyAudio.xcodeproj",
-                "-target",
-                "ProxyAudio",
-                "clean"
-            ],
-            "group": "build",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Install ProxyAudio",
-            "type": "shell",
-            "dependsOrder": "sequence",
-            "dependsOn": ["Build ProxyAudio (Release)"],
-            "command": "sudo cp -R ${workspaceFolder}/build/Release/ProxyAudio.driver /Library/Audio/Plug-Ins/HAL/ && sudo killall -9 coreaudiod",
-            "group": "build",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Uninstall ProxyAudio",
-            "type": "shell",
-            "command": "sudo rm -rf /Library/Audio/Plug-Ins/HAL/ProxyAudio.driver && sudo killall -9 coreaudiod",
-            "group": "build",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared",
-                "showReuseMessage": true,
-                "clear": false
-            },
-            "problemMatcher": []
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build ProxyAudio",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project",
+        "ProxyAudio.xcodeproj",
+        "-target",
+        "ProxyAudio",
+        "-configuration",
+        "Debug",
+        "build",
+        "CODE_SIGN_IDENTITY=",
+        "CODE_SIGNING_REQUIRED=NO"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": {
+        "owner": "xcode",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
         }
-    ]
+      }
+    },
+    {
+      "label": "Build ProxyAudio (Release)",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project",
+        "ProxyAudio.xcodeproj",
+        "-target",
+        "ProxyAudio",
+        "-configuration",
+        "Release",
+        "build",
+        "CODE_SIGN_IDENTITY=",
+        "CODE_SIGNING_REQUIRED=NO"
+      ],
+      "group": "build",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": {
+        "owner": "xcode",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+      }
+    },
+    {
+      "label": "Clean ProxyAudio",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project",
+        "ProxyAudio.xcodeproj",
+        "-target",
+        "ProxyAudio",
+        "clean"
+      ],
+      "group": "build",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Install ProxyAudio",
+      "type": "shell",
+      "command": "script/install.sh",
+      "group": "build",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Uninstall ProxyAudio",
+      "type": "shell",
+      "command": "sudo rm -rf /Library/Audio/Plug-Ins/HAL/ProxyAudio.driver && sudo killall -9 coreaudiod",
+      "group": "build",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": []
+    }
+  ]
 }
