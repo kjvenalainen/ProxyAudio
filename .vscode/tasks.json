@@ -81,14 +81,8 @@
     {
       "label": "Clean ProxyAudio",
       "type": "shell",
-      "command": "xcodebuild",
-      "args": [
-        "-project",
-        "ProxyAudio.xcodeproj",
-        "-target",
-        "ProxyAudio",
-        "clean"
-      ],
+      "command": "rm",
+      "args": ["-r", "${workspaceFolder}/build"],
       "group": "build",
       "presentation": {
         "echo": true,

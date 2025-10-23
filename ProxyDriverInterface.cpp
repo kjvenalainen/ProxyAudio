@@ -6,6 +6,8 @@
 
 #include "ProxyDriverInterface.hpp"
 
+#include "Utils.hpp"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,10 +29,17 @@ void* ProxyDriverInterfaceCreate(CFAllocatorRef inAllocator,
 #pragma unused(inAllocator)
 
   if (!CFEqual(inRequestedTypeUUID, kAudioServerPlugInTypeUUID)) {
+    Log("Requested type UUID is not kAudioServerPlugInTypeUUID");
+
     return nullptr;
   }
 
-  return ProxyAudio::ProxyDriverInterface::GetInstance().GetDriverRef();
+  const auto driverRef =
+      ProxyAudio::ProxyDriverInterface::GetInstance().GetDriverRef();
+
+  Log("Success [driver: %p]", driverRef);
+
+  return driverRef;
 }
 
 #ifdef __cplusplus

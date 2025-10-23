@@ -30,15 +30,6 @@ public:
     value_ = std::move(new_value);
   }
 
-  bool CompareAndSet(const T &expected, T new_value) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    if (value_ == expected) {
-      value_ = std::move(new_value);
-      return true;
-    }
-    return false;
-  }
-
 private:
   mutable std::shared_mutex mutex_;
   T value_;

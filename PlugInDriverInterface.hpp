@@ -19,7 +19,9 @@ constexpr static bool ENABLE_STATIC_LOGGING = true;
     Log(inFormat, ##__VA_ARGS__);        \
   }
 
-template <class T>
+// Implements the single instance pattern for the driver, and provides the
+// static COM method routing to the driver instance.
+template <typename T>
 class PlugInDriverInterface {
  public:
   using Self = PlugInDriverInterface<T>;
@@ -35,6 +37,11 @@ class PlugInDriverInterface {
   // Asserts that the provided reference points to the single instance of the
   // driver and returns a reference to it.
   static T& GetDriver(const AudioServerPlugInDriverRef& inDriverRef) {
+    static_assert(std::is_base_of_v<PlugInDriverInterface<T>, T>,
+                  "T must be derived from PlugInDriverInterface");
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winvalid-offsetof"
     auto& driver = *reinterpret_cast<T*>(reinterpret_cast<UInt8*>(inDriverRef) -
                                          offsetof(T, interfacePtr_));
 
@@ -44,7 +51,7 @@ class PlugInDriverInterface {
   // Gets the driver ref from the driver instance.
   AudioServerPlugInDriverRef GetDriverRef() { return &interfacePtr_; }
 
-  virtual ~PlugInDriverInterface() = 0;
+  virtual ~PlugInDriverInterface() = default;
 
  private:
   // Static C functions that implement the AudioServerPlugInDriverInterface
@@ -231,8 +238,6 @@ class PlugInDriverInterface {
                                          Float64* outSampleTime,
                                          UInt64* outHostTime,
                                          UInt64* outSeed) {
-    LogStatic("StaticGetZeroTimeStamp [driver: %p]", inDriver);
-
     return GetDriver(inDriver).GetZeroTimeStamp(
         inDeviceObjectID, inClientID, outSampleTime, outHostTime, outSeed);
   }
@@ -243,8 +248,6 @@ class PlugInDriverInterface {
                                           UInt32 inOperationID,
                                           Boolean* outWillDo,
                                           Boolean* outWillDoInPlace) {
-    LogStatic("StaticWillDoIOOperation [driver: %p]", inDriver);
-
     return GetDriver(inDriver).WillDoIOOperation(inDeviceObjectID, inClientID,
                                                  inOperationID, outWillDo,
                                                  outWillDoInPlace);
@@ -257,8 +260,6 @@ class PlugInDriverInterface {
       UInt32 inOperationID,
       UInt32 inIOBufferFrameSize,
       const AudioServerPlugInIOCycleInfo* inIOCycleInfo) {
-    LogStatic("StaticBeginIOOperation [driver: %p]", inDriver);
-
     return GetDriver(inDriver).BeginIOOperation(
         inDeviceObjectID, inClientID, inOperationID, inIOBufferFrameSize,
         inIOCycleInfo);
@@ -274,8 +275,6 @@ class PlugInDriverInterface {
       const AudioServerPlugInIOCycleInfo* inIOCycleInfo,
       void* ioMainBuffer,
       void* ioSecondaryBuffer) {
-    LogStatic("StaticDoIOOperation [driver: %p]", inDriver);
-
     return GetDriver(inDriver).DoIOOperation(
         inDeviceObjectID, inStreamObjectID, inClientID, inOperationID,
         inIOBufferFrameSize, inIOCycleInfo, ioMainBuffer, ioSecondaryBuffer);
@@ -288,8 +287,6 @@ class PlugInDriverInterface {
       UInt32 inOperationID,
       UInt32 inIOBufferFrameSize,
       const AudioServerPlugInIOCycleInfo* inIOCycleInfo) {
-    LogStatic("StaticEndIOOperation [driver: %p]", inDriver);
-
     return GetDriver(inDriver).EndIOOperation(
         inDeviceObjectID, inClientID, inOperationID, inIOBufferFrameSize,
         inIOCycleInfo);
@@ -327,9 +324,5 @@ class PlugInDriverInterface {
   AudioServerPlugInDriverInterface interface_;
   AudioServerPlugInDriverInterface* interfacePtr_;
 };
-
-// Pure virtual destructor must be defined
-template <class T>
-PlugInDriverInterface<T>::~PlugInDriverInterface() {}
 
 }  // namespace ProxyAudio

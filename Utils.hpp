@@ -28,6 +28,6 @@ constexpr static inline const char* GetFilename(const char* filePath) {
 
 #define Log(inFormat, ...)                                 \
   os_log(OS_LOG_DEFAULT, "%{public}s:%d | " inFormat "\n", \
-         GetFilename(__FILE__), __LINE__, ##__VA_ARGS__)
+         ProxyAudio::GetFilename(__FILE__), __LINE__, ##__VA_ARGS__)
 
 }  // namespace ProxyAudio

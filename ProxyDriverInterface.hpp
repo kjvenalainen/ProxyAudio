@@ -12,9 +12,13 @@
 #include <mach/kern_return.h>
 #include <mach/mach_time.h>
 
+#include "AudioObjectRegistry.hpp"
+#include "Box.hpp"
 #include "CFSharedPtr.hpp"
+#include "Device.hpp"
 #include "Error.hpp"
 #include "PlugInDriverInterface.hpp"
+#include "Utils.hpp"
 
 // The global AudioServerPlugInDriverInterface object for ProxyAudio.
 extern AudioServerPlugInDriverInterface gAudioServerPlugInDriverInterface;
@@ -57,16 +61,16 @@ class ProxyDriverInterface
                             "Failed to create the CFUUIDRef");
       }
 
+      // TODO: Remove this.
+      gAudioServerPlugInDriverInterface.QueryInterface(
+          gAudioServerPlugInDriverRef, inUUID, outInterface);
+
       if (requestedUUID == IUnknownUUID ||
           requestedUUID == kAudioServerPlugInDriverInterfaceUUID) {
         *outInterface = GetDriverRef();
       } else {
         throw ErrorWithCode(E_NOINTERFACE, "Requested interface not supported");
       }
-
-      // TODO: Remove this.
-      gAudioServerPlugInDriverInterface.QueryInterface(
-          gAudioServerPlugInDriverRef, inUUID, outInterface);
 
       return S_OK;
     } catch (const ErrorWithCode& e) {
@@ -104,8 +108,6 @@ class ProxyDriverInterface
       // the driver maintains (such as the device list) to get the inital set of
       // objects the driver is 	publishing. So, there is no need to notifiy the
       // HAL about any objects created as part of the execution of this method.
-      Log("Initializing");
-
       host_ = inHost;
 
       // TODO: Do we really need a box acquired property?
@@ -128,6 +130,8 @@ class ProxyDriverInterface
       gAudioServerPlugInDriverInterface.Initialize(gAudioServerPlugInDriverRef,
                                                    inHost);
 
+      Log("Initialize Success");
+
       return S_OK;
     } catch (const ErrorWithCode& e) {
       e.log();
@@ -143,8 +147,6 @@ class ProxyDriverInterface
     // AudioEndpoints. Since this driver is not a Transport Manager, we just
     // check the arguments and return kAudioHardwareUnsupportedOperationError.
 
-#pragma unused(inDescription, inClientInfo, outDeviceObjectID)
-
     return kAudioHardwareUnsupportedOperationError;
   }
 
@@ -153,8 +155,6 @@ class ProxyDriverInterface
     // Manager semantics to destroy an AudioEndpointDevice. Since this driver is
     // not a Transport Manager, we just check the arguments and return
     // kAudioHardwareUnsupportedOperationError.
-
-#pragma unused(inDeviceObjectID)
 
     return kAudioHardwareUnsupportedOperationError;
   }
@@ -166,8 +166,6 @@ class ProxyDriverInterface
     // This allows the device to act differently depending on who the client is.
     // This driver does not need to track the clients using the device, so we
     // just check the arguments and return successfully.
-
-#pragma unused(inClientInfo)
 
     // TODO: Validate that the inDeviceObjectID corresponds to one of our
     // devices.
@@ -181,8 +179,6 @@ class ProxyDriverInterface
     // using the given
     // device. This driver does not track clients, so we just check the
     // arguments and return successfully.
-
-#pragma unused(inClientInfo)
 
     // TODO: Validate that the inDeviceObjectID corresponds to one of our
     // devices.
@@ -259,13 +255,59 @@ class ProxyDriverInterface
   }
 
   OSStatus StartIO(AudioObjectID inDeviceObjectID, UInt32 inClientID) {
-    return gAudioServerPlugInDriverInterface.StartIO(
-        gAudioServerPlugInDriverRef, inDeviceObjectID, inClientID);
+    // This call tells the device that IO is starting for the given client. When
+    // this routine
+    // returns, the device's clock is running and it is ready to have data
+    // read/written. It is important to note that multiple clients can have IO
+    // running on the device at the same time. So, work only needs to be done
+    // when the first client starts. All subsequent starts simply increment the
+    // counter.
+
+    // TODO: Remove this.
+    gAudioServerPlugInDriverInterface.StartIO(gAudioServerPlugInDriverRef,
+                                              inDeviceObjectID, inClientID);
+
+    try {
+      auto devicePtr = objects_[inDeviceObjectID];
+      if (devicePtr == nullptr || devicePtr->ClassId() != kAudioDeviceClassID) {
+        throw ErrorWithCode(kAudioHardwareBadObjectError,
+                            "Invalid device object ID [id:" +
+                                std::to_string(inDeviceObjectID) + "]");
+      }
+
+      Device& device = static_cast<Device&>(*devicePtr);
+      return device.StartIO(inClientID);
+    } catch (const ErrorWithCode& e) {
+      e.log();
+      return e.code();
+    }
   }
 
   OSStatus StopIO(AudioObjectID inDeviceObjectID, UInt32 inClientID) {
-    return gAudioServerPlugInDriverInterface.StopIO(
-        gAudioServerPlugInDriverRef, inDeviceObjectID, inClientID);
+    // This call tells the device that IO is stopping for the given client. When
+    // this routine returns, the device's clock is stopped and it is no longer
+    // ready to have data read/written. It is important to note that multiple
+    // clients can have IO running on the device at the same time. So, work only
+    // needs to be done when the last client stops.
+
+    // TODO: Remove this.
+    gAudioServerPlugInDriverInterface.StopIO(gAudioServerPlugInDriverRef,
+                                             inDeviceObjectID, inClientID);
+
+    try {
+      auto devicePtr = objects_[inDeviceObjectID];
+      if (devicePtr == nullptr || devicePtr->ClassId() != kAudioDeviceClassID) {
+        throw ErrorWithCode(kAudioHardwareBadObjectError,
+                            "Invalid device object ID [id:" +
+                                std::to_string(inDeviceObjectID) + "]");
+      }
+
+      Device& device = static_cast<Device&>(*devicePtr);
+      return device.StopIO(inClientID);
+    } catch (const ErrorWithCode& e) {
+      e.log();
+      return e.code();
+    }
   }
 
   OSStatus GetZeroTimeStamp(AudioObjectID inDeviceObjectID,
@@ -329,6 +371,7 @@ class ProxyDriverInterface
   std::atomic<ULONG> refCount_ = 1U;
   AudioServerPlugInHostRef host_ = nullptr;
   double hostTicksPerFrame_ = 0.0f;
+  AudioObjectRegistry objects_;
 };
 
 }  // namespace ProxyAudio

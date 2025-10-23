@@ -6,6 +6,18 @@ Proxy Audio is a modern C++20 based audio driver that passes data and commands t
 
 TBD
 
+# CoreAudio Notes
+
+`AudioObjectInterface` heirarchy of ownership.
+
+PlugIn Driver
+  ↳ Box
+    ↳ Device - Only if box is acquired
+      ↳ Stream (Stream)
+      ↳ Volume (Control)
+      ↳ Mute (Control)
+      ↳ DataSource (Control)
+
 # License
 
 MIT License
