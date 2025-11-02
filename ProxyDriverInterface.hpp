@@ -6,11 +6,14 @@
 
 #pragma once
 
+#include <CoreAudio/AudioHardwareBase.h>
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <CoreFoundation/CFUUID.h>
 #include <MacTypes.h>
 #include <mach/kern_return.h>
 #include <mach/mach_time.h>
+
+#include <type_traits>
 
 #include "AudioObjectRegistry.hpp"
 #include "Box.hpp"
@@ -39,44 +42,42 @@ namespace ProxyAudio {
 
 constexpr float SAMPLE_RATE = 48000.0f;
 
-class ProxyDriverInterface
-    : public PlugInDriverInterface<ProxyDriverInterface> {
-  friend PlugInDriverInterface<ProxyDriverInterface>;
-
+class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
+                             public AudioObjectInterface {
  public:
+  ProxyDriverInterface(AudioObjectID id)
+      : AudioObjectInterface(id, kAudioPlugInClassID) {}
+
   virtual ~ProxyDriverInterface() override = default;
 
+#pragma region PlugInDriverInterface
+
   HRESULT QueryInterface(REFIID inUUID, LPVOID* outInterface) {
-    try {
-      if (outInterface == nullptr) {
-        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
-                            "No place to store the returned interface");
-      }
-
-      const auto requestedUUID =
-          CFSharedPtr(CFUUIDCreateFromUUIDBytes(NULL, inUUID));
-
-      if (requestedUUID == nullptr) {
-        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
-                            "Failed to create the CFUUIDRef");
-      }
-
-      // TODO: Remove this.
-      gAudioServerPlugInDriverInterface.QueryInterface(
-          gAudioServerPlugInDriverRef, inUUID, outInterface);
-
-      if (requestedUUID == IUnknownUUID ||
-          requestedUUID == kAudioServerPlugInDriverInterfaceUUID) {
-        *outInterface = GetDriverRef();
-      } else {
-        throw ErrorWithCode(E_NOINTERFACE, "Requested interface not supported");
-      }
-
-      return S_OK;
-    } catch (const ErrorWithCode& e) {
-      e.log();
-      return e.code();
+    if (outInterface == nullptr) {
+      throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                          "No place to store the returned interface");
     }
+
+    const auto requestedUUID =
+        CFSharedPtr(CFUUIDCreateFromUUIDBytes(NULL, inUUID));
+
+    if (requestedUUID == nullptr) {
+      throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                          "Failed to create the CFUUIDRef");
+    }
+
+    // TODO: Remove this.
+    gAudioServerPlugInDriverInterface.QueryInterface(
+        gAudioServerPlugInDriverRef, inUUID, outInterface);
+
+    if (requestedUUID == IUnknownUUID ||
+        requestedUUID == kAudioServerPlugInDriverInterfaceUUID) {
+      *outInterface = GetDriverRef();
+    } else {
+      throw ErrorWithCode(E_NOINTERFACE, "Requested interface not supported");
+    }
+
+    return S_OK;
   }
 
   ULONG AddRef() {
@@ -100,43 +101,38 @@ class ProxyDriverInterface
   }
 
   HRESULT Initialize(AudioServerPlugInHostRef inHost) {
-    try {
-      // The job of this method is, as the name implies, to get the
-      // driver initialized. One specific thing that needs to be done is to
-      // store the AudioServerPlugInHostRef so that it can be used 	later.
-      // Note that when this call returns, the HAL will scan the various lists
-      // the driver maintains (such as the device list) to get the inital set of
-      // objects the driver is 	publishing. So, there is no need to notifiy the
-      // HAL about any objects created as part of the execution of this method.
-      host_ = inHost;
+    // The job of this method is, as the name implies, to get the
+    // driver initialized. One specific thing that needs to be done is to
+    // store the AudioServerPlugInHostRef so that it can be used 	later.
+    // Note that when this call returns, the HAL will scan the various lists
+    // the driver maintains (such as the device list) to get the inital set of
+    // objects the driver is 	publishing. So, there is no need to notifiy the
+    // HAL about any objects created as part of the execution of this method.
+    host_ = inHost;
 
-      // TODO: Do we really need a box acquired property?
+    // TODO: Do we really need a box acquired property?
 
-      // TODO: Load settings using `Host->CopyFromStorage`.
+    // TODO: Load settings using `Host->CopyFromStorage`.
 
-      // Calculate the host ticks per frame
-      struct mach_timebase_info timebaseInfo;
-      if (KERN_SUCCESS != mach_timebase_info(&timebaseInfo)) {
-        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
-                            "Failed to get mach_timebase_info");
-      }
-
-      const auto theHostClockFrequency =
-          static_cast<double>(timebaseInfo.denom) /
-          static_cast<double>(timebaseInfo.numer) * 1000000000.0;
-      hostTicksPerFrame_ = theHostClockFrequency / SAMPLE_RATE;
-
-      // TODO: Remove this.
-      gAudioServerPlugInDriverInterface.Initialize(gAudioServerPlugInDriverRef,
-                                                   inHost);
-
-      Log("Initialize Success");
-
-      return S_OK;
-    } catch (const ErrorWithCode& e) {
-      e.log();
-      return e.code();
+    // Calculate the host ticks per frame
+    struct mach_timebase_info timebaseInfo;
+    if (KERN_SUCCESS != mach_timebase_info(&timebaseInfo)) {
+      throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                          "Failed to get mach_timebase_info");
     }
+
+    const auto theHostClockFrequency = static_cast<double>(timebaseInfo.denom) /
+                                       static_cast<double>(timebaseInfo.numer) *
+                                       1000000000.0;
+    hostTicksPerFrame_ = theHostClockFrequency / SAMPLE_RATE;
+
+    // TODO: Remove this.
+    gAudioServerPlugInDriverInterface.Initialize(gAudioServerPlugInDriverRef,
+                                                 inHost);
+
+    Log("Initialize Success");
+
+    return S_OK;
   }
 
   OSStatus CreateDevice(CFDictionaryRef inDescription,
@@ -267,20 +263,15 @@ class ProxyDriverInterface
     gAudioServerPlugInDriverInterface.StartIO(gAudioServerPlugInDriverRef,
                                               inDeviceObjectID, inClientID);
 
-    try {
-      auto devicePtr = objects_[inDeviceObjectID];
-      if (devicePtr == nullptr || devicePtr->ClassId() != kAudioDeviceClassID) {
-        throw ErrorWithCode(kAudioHardwareBadObjectError,
-                            "Invalid device object ID [id:" +
-                                std::to_string(inDeviceObjectID) + "]");
-      }
-
-      Device& device = static_cast<Device&>(*devicePtr);
-      return device.StartIO(inClientID);
-    } catch (const ErrorWithCode& e) {
-      e.log();
-      return e.code();
+    auto devicePtr = GetRegistry()[inDeviceObjectID];
+    if (devicePtr == nullptr || devicePtr->ClassId() != kAudioDeviceClassID) {
+      throw ErrorWithCode(kAudioHardwareBadObjectError,
+                          "Invalid device object ID [id:" +
+                              std::to_string(inDeviceObjectID) + "]");
     }
+
+    Device& device = static_cast<Device&>(*devicePtr);
+    return device.StartIO(inClientID);
   }
 
   OSStatus StopIO(AudioObjectID inDeviceObjectID, UInt32 inClientID) {
@@ -294,20 +285,15 @@ class ProxyDriverInterface
     gAudioServerPlugInDriverInterface.StopIO(gAudioServerPlugInDriverRef,
                                              inDeviceObjectID, inClientID);
 
-    try {
-      auto devicePtr = objects_[inDeviceObjectID];
-      if (devicePtr == nullptr || devicePtr->ClassId() != kAudioDeviceClassID) {
-        throw ErrorWithCode(kAudioHardwareBadObjectError,
-                            "Invalid device object ID [id:" +
-                                std::to_string(inDeviceObjectID) + "]");
-      }
-
-      Device& device = static_cast<Device&>(*devicePtr);
-      return device.StopIO(inClientID);
-    } catch (const ErrorWithCode& e) {
-      e.log();
-      return e.code();
+    auto devicePtr = GetRegistry()[inDeviceObjectID];
+    if (devicePtr == nullptr || devicePtr->ClassId() != kAudioDeviceClassID) {
+      throw ErrorWithCode(kAudioHardwareBadObjectError,
+                          "Invalid device object ID [id:" +
+                              std::to_string(inDeviceObjectID) + "]");
     }
+
+    Device& device = static_cast<Device&>(*devicePtr);
+    return device.StopIO(inClientID);
   }
 
   OSStatus GetZeroTimeStamp(AudioObjectID inDeviceObjectID,
@@ -364,14 +350,55 @@ class ProxyDriverInterface
         inOperationID, inIOBufferFrameSize, inIOCycleInfo);
   }
 
- protected:
-  ProxyDriverInterface() = default;
+#pragma endregion
 
+#pragma region AudioObjectInterface
+
+  Boolean HasProperty(pid_t inClientProcessID,
+                      const AudioObjectPropertyAddress* inAddress) override {
+    return false;
+  }
+
+  OSStatus IsPropertySettable(pid_t inClientProcessID,
+                              const AudioObjectPropertyAddress* inAddress,
+                              Boolean* outIsSettable) override {
+    return kAudioHardwareBadPropertySizeError;
+  }
+
+  OSStatus GetPropertyDataSize(pid_t inClientProcessID,
+                               const AudioObjectPropertyAddress* inAddress,
+                               UInt32 inQualifierDataSize,
+                               const void* inQualifierData,
+                               UInt32* outDataSize) override {
+    return kAudioHardwareBadPropertySizeError;
+  }
+
+  OSStatus GetPropertyData(pid_t inClientProcessID,
+                           const AudioObjectPropertyAddress* inAddress,
+                           UInt32 inQualifierDataSize,
+                           const void* inQualifierData,
+                           UInt32 inDataSize,
+                           UInt32* outDataSize,
+                           void* outData) override {
+    return kAudioHardwareBadPropertySizeError;
+  }
+
+  OSStatus SetPropertyData(pid_t inClientProcessID,
+                           const AudioObjectPropertyAddress* inAddress,
+                           UInt32 inQualifierDataSize,
+                           const void* inQualifierData,
+                           UInt32 inDataSize,
+                           const void* inData) override {
+    return kAudioHardwareBadPropertySizeError;
+  }
+
+#pragma endregion
+
+ protected:
  private:
   std::atomic<ULONG> refCount_ = 1U;
   AudioServerPlugInHostRef host_ = nullptr;
   double hostTicksPerFrame_ = 0.0f;
-  AudioObjectRegistry objects_;
 };
 
 }  // namespace ProxyAudio

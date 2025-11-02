@@ -14,7 +14,10 @@
 
 namespace ProxyAudio {
 
-// Dynamic registry for Audio Objects, allowing access based on ID.
+// Dynamic registry for Audio Objects, allowing access based on ID. StartId is
+// the first ID to use, and is used to offset the IDs of the objects in the
+// registry.
+template <size_t StartId = kAudioObjectPlugInObject>
 class AudioObjectRegistry {
  public:
   AudioObjectRegistry() = default;
@@ -35,9 +38,8 @@ class AudioObjectRegistry {
       if (objects_[i] == nullptr) {
         // Construct the object with the free ID, and add it to the vector.
         auto object =
-            std::make_shared<T>(std::move(T(static_cast<AudioObjectID>(i),
-                                            std::forward<Args>(args)...)),
-                                RemoveObjectOnDestruction(*this));
+            std::make_shared<T>(static_cast<AudioObjectID>(i + StartId),
+                                std::forward<Args>(args)...);
 
         objects_[i] = object;
         return object;
@@ -46,9 +48,8 @@ class AudioObjectRegistry {
 
     // No free ID found, add a new one at the end of the vector.
     auto object = std::make_shared<T>(
-        std::move(T(static_cast<AudioObjectID>(objects_.size()),
-                    std::forward<Args>(args)...)),
-        RemoveObjectOnDestruction(*this));
+        static_cast<AudioObjectID>(objects_.size() + StartId),
+        std::forward<Args>(args)...);
 
     objects_.push_back(object);
     return object;
@@ -59,38 +60,25 @@ class AudioObjectRegistry {
     // No need to lock, we will copy the shared pointer to the caller, extending
     // its lifetime.
 
-    if (id >= objects_.size()) {
+    if (id - StartId >= objects_.size()) {
       return nullptr;
     }
 
-    return objects_[id];
+    return objects_[id - StartId];
   }
 
- private:
-  class RemoveObjectOnDestruction {
-   public:
-    RemoveObjectOnDestruction(AudioObjectRegistry& inRegistry)
-        : registry_(inRegistry) {}
-
-    void operator()(AudioObjectInterface* inObject) {
-      registry_.RemoveObject(inObject->Id());
-    }
-
-   private:
-    AudioObjectRegistry& registry_;
-  };
-
-  // Remove object by ID, called by RemoveObjectOnDestruction.
-  void RemoveObject(AudioObjectID id) {
+  // Remove the object by ID.
+  void Remove(AudioObjectID id) {
     std::lock_guard<std::shared_mutex> lock(objects_mutex_);
 
-    if (id >= objects_.size()) {
+    if (id - StartId >= objects_.size()) {
       return;
     }
 
-    objects_[id].reset();
+    objects_[id - StartId].reset();
   }
 
+ private:
   // Mutex for modifying the objects vector.
   std::shared_mutex objects_mutex_;
   // Vector of objects, indexed by ID.
