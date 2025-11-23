@@ -11,13 +11,11 @@
 #include <vector>
 
 #include "AudioObjectInterface.hpp"
+#include "Utils.hpp"
 
 namespace ProxyAudio {
 
-// Dynamic registry for Audio Objects, allowing access based on ID. StartId is
-// the first ID to use, and is used to offset the IDs of the objects in the
-// registry.
-template <size_t StartId = kAudioObjectPlugInObject>
+// Dynamic registry for Audio Objects, allowing access based on ID.
 class AudioObjectRegistry {
  public:
   AudioObjectRegistry() = default;
@@ -37,9 +35,12 @@ class AudioObjectRegistry {
     for (size_t i = 0; i < objects_.size(); i++) {
       if (objects_[i] == nullptr) {
         // Construct the object with the free ID, and add it to the vector.
-        auto object =
-            std::make_shared<T>(static_cast<AudioObjectID>(i + StartId),
-                                std::forward<Args>(args)...);
+        auto object = std::make_shared<T>(
+            static_cast<AudioObjectID>(i + kAudioObjectPlugInObject), *this,
+            std::forward<Args>(args)...);
+
+        Log("Using existing ID [id: %d, numObjects: %zu]", object->Id(),
+            objects_.size());
 
         objects_[i] = object;
         return object;
@@ -48,8 +49,11 @@ class AudioObjectRegistry {
 
     // No free ID found, add a new one at the end of the vector.
     auto object = std::make_shared<T>(
-        static_cast<AudioObjectID>(objects_.size() + StartId),
-        std::forward<Args>(args)...);
+        static_cast<AudioObjectID>(objects_.size() + kAudioObjectPlugInObject),
+        *this, std::forward<Args>(args)...);
+
+    Log("Using new ID [id: %d, numObjects: %zu]", object->Id(),
+        objects_.size());
 
     objects_.push_back(object);
     return object;
@@ -60,22 +64,26 @@ class AudioObjectRegistry {
     // No need to lock, we will copy the shared pointer to the caller, extending
     // its lifetime.
 
-    if (id - StartId >= objects_.size()) {
+    if (id - kAudioObjectPlugInObject >= objects_.size()) {
       return nullptr;
     }
 
-    return objects_[id - StartId];
+    return objects_[id - kAudioObjectPlugInObject];
   }
 
   // Remove the object by ID.
   void Remove(AudioObjectID id) {
     std::lock_guard<std::shared_mutex> lock(objects_mutex_);
 
-    if (id - StartId >= objects_.size()) {
+    if (id - kAudioObjectPlugInObject >= objects_.size()) {
+      Log("Object not found [id: %d, numObjects: %zu]", id, objects_.size());
+
       return;
     }
 
-    objects_[id - StartId].reset();
+    Log("Removing object [id: %d, numObjects: %zu]", id, objects_.size());
+
+    objects_[id - kAudioObjectPlugInObject].reset();
   }
 
  private:
@@ -83,6 +91,16 @@ class AudioObjectRegistry {
   std::shared_mutex objects_mutex_;
   // Vector of objects, indexed by ID.
   std::vector<std::shared_ptr<AudioObjectInterface>> objects_;
+};
+
+class AudioObjectRegistryRef {
+ public:
+  AudioObjectRegistryRef(AudioObjectRegistry& registry) : registry_(registry) {}
+
+  ~AudioObjectRegistryRef() = default;
+
+ protected:
+  AudioObjectRegistry& registry_;
 };
 
 }  // namespace ProxyAudio

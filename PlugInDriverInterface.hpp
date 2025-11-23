@@ -32,7 +32,7 @@ class PlugInDriverInterface {
   struct PlugInDriverSingleton {
     PlugInDriverSingleton() : registry() { driver = registry.Construct<T>(); }
 
-    AudioObjectRegistry<> registry;
+    AudioObjectRegistry registry;
     std::shared_ptr<T> driver;
   };
 
@@ -217,8 +217,17 @@ class PlugInDriverInterface {
     LogStatic("StaticHasProperty [driver: %p]", inDriver);
 
     try {
-      return GetDriver(inDriver).HasProperty(inObjectID, inClientProcessID,
-                                             inAddress);
+      if (inAddress == nullptr) {
+        return false;
+      }
+
+      auto& registry = GetDriver(inDriver).GetRegistry();
+      auto objectPtr = registry[inObjectID];
+      if (objectPtr == nullptr) {
+        return false;
+      }
+
+      return objectPtr->HasProperty(inClientProcessID, inAddress);
     } catch (const ErrorWithCode& e) {
       e.log();
       return false;
@@ -234,8 +243,25 @@ class PlugInDriverInterface {
     LogStatic("StaticIsPropertySettable [driver: %p]", inDriver);
 
     try {
-      return GetDriver(inDriver).IsPropertySettable(
-          inObjectID, inClientProcessID, inAddress, outIsSettable);
+      if (inAddress == nullptr) {
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "IsPropertySettable: no address");
+      }
+      if (outIsSettable == nullptr) {
+        throw ErrorWithCode(
+            kAudioHardwareIllegalOperationError,
+            "IsPropertySettable: no place to put the return value");
+      }
+
+      auto& registry = GetDriver(inDriver).GetRegistry();
+      auto objectPtr = registry[inObjectID];
+      if (objectPtr == nullptr) {
+        throw ErrorWithCode(kAudioHardwareBadObjectError,
+                            "IsPropertySettable: invalid object ID");
+      }
+
+      return objectPtr->IsPropertySettable(inClientProcessID, inAddress,
+                                           outIsSettable);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();
@@ -253,9 +279,26 @@ class PlugInDriverInterface {
     LogStatic("StaticGetPropertyDataSize [driver: %p]", inDriver);
 
     try {
-      return GetDriver(inDriver).GetPropertyDataSize(
-          inObjectID, inClientProcessID, inAddress, inQualifierDataSize,
-          inQualifierData, outDataSize);
+      if (inAddress == nullptr) {
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "GetPropertyDataSize: no address");
+      }
+      if (outDataSize == nullptr) {
+        throw ErrorWithCode(
+            kAudioHardwareIllegalOperationError,
+            "GetPropertyDataSize: no place to put the return value");
+      }
+
+      auto& registry = GetDriver(inDriver).GetRegistry();
+      auto objectPtr = registry[inObjectID];
+      if (objectPtr == nullptr) {
+        throw ErrorWithCode(kAudioHardwareBadObjectError,
+                            "GetPropertyDataSize: invalid object ID");
+      }
+
+      return objectPtr->GetPropertyDataSize(inClientProcessID, inAddress,
+                                            inQualifierDataSize,
+                                            inQualifierData, outDataSize);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();
@@ -275,9 +318,31 @@ class PlugInDriverInterface {
     LogStatic("StaticGetPropertyData [driver: %p]", inDriver);
 
     try {
-      return GetDriver(inDriver).GetPropertyData(
-          inObjectID, inClientProcessID, inAddress, inQualifierDataSize,
-          inQualifierData, inDataSize, outDataSize, outData);
+      if (inAddress == nullptr) {
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "GetPropertyData: no address");
+      }
+      if (outDataSize == nullptr) {
+        throw ErrorWithCode(
+            kAudioHardwareIllegalOperationError,
+            "GetPropertyData: no place to put the return value size");
+      }
+      if (outData == nullptr) {
+        throw ErrorWithCode(
+            kAudioHardwareIllegalOperationError,
+            "GetPropertyData: no place to put the return value");
+      }
+
+      auto& registry = GetDriver(inDriver).GetRegistry();
+      auto objectPtr = registry[inObjectID];
+      if (objectPtr == nullptr) {
+        throw ErrorWithCode(kAudioHardwareBadObjectError,
+                            "GetPropertyData: invalid object ID");
+      }
+
+      return objectPtr->GetPropertyData(inClientProcessID, inAddress,
+                                        inQualifierDataSize, inQualifierData,
+                                        inDataSize, outDataSize, outData);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();
@@ -296,9 +361,21 @@ class PlugInDriverInterface {
     LogStatic("StaticSetPropertyData [driver: %p]", inDriver);
 
     try {
-      return GetDriver(inDriver).SetPropertyData(
-          inObjectID, inClientProcessID, inAddress, inQualifierDataSize,
-          inQualifierData, inDataSize, inData);
+      if (inAddress == nullptr) {
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "SetPropertyData: no address");
+      }
+
+      auto& registry = GetDriver(inDriver).GetRegistry();
+      auto objectPtr = registry[inObjectID];
+      if (objectPtr == nullptr) {
+        throw ErrorWithCode(kAudioHardwareBadObjectError,
+                            "SetPropertyData: invalid object ID");
+      }
+
+      return objectPtr->SetPropertyData(inClientProcessID, inAddress,
+                                        inQualifierDataSize, inQualifierData,
+                                        inDataSize, inData);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();

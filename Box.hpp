@@ -10,19 +10,32 @@
 #include <mach/mach_time.h>
 
 #include "AudioObjectInterface.hpp"
+#include "AudioObjectRegistry.hpp"
+#include "Device.hpp"
 #include "Error.hpp"
 
 namespace ProxyAudio {
 
-class Box : public AudioObjectInterface {
+class Box : public AudioObjectInterface, public AudioObjectRegistryRef {
  public:
-  Box(AudioObjectID id) : AudioObjectInterface(id, kAudioBoxClassID) {}
+  Box(AudioObjectID id, AudioObjectRegistry& registry)
+      : AudioObjectInterface(id, kAudioBoxClassID),
+        AudioObjectRegistryRef(registry),
+        devices_() {
+    // Temporary: Add a single device to the box. Eventually we will create
+    // these dynamically.
+    devices_.push_back(
+        registry.Construct<Device>("ProxyAudio Device", "ProxyAudioDeviceUID"));
+  }
 
-  Box(const Box& other) = default;
-
-  Box(Box&& other) noexcept = default;
+  Box(const Box& other) noexcept = delete;
+  Box(Box&& other) noexcept = delete;
 
   ~Box() = default;
+
+  const bool Acquired() const { return acquired_; }
+
+  void SetAcquired(bool acquired) { acquired_ = acquired; }
 
   Boolean HasProperty(pid_t inClientProcessID,
                       const AudioObjectPropertyAddress* inAddress) override {
@@ -62,7 +75,14 @@ class Box : public AudioObjectInterface {
     return kAudioHardwareBadPropertySizeError;
   }
 
+  // Readonly access to the devices.
+  const std::vector<std::shared_ptr<Device>>& Devices() const {
+    return devices_;
+  }
+
  private:
+  bool acquired_ = false;
+  std::vector<std::shared_ptr<Device>> devices_;
 };
 
 }  // namespace ProxyAudio

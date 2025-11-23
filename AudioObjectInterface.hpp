@@ -51,6 +51,14 @@ class AudioObjectInterface {
   // Easier access to the class ID.
   const AudioClassID ClassId() const { return classId_; }
 
+  // Easier access to the object as a specific type.
+  template <
+      typename T,
+      std::enable_if_t<std::is_base_of_v<AudioObjectInterface, T>, int> = 0>
+  T& As() {
+    return reinterpret_cast<T&>(*this);
+  }
+
  protected:
   AudioObjectInterface(const AudioObjectID id, const AudioClassID classId)
       : id_(id), classId_(classId) {}
