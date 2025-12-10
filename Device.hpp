@@ -16,6 +16,7 @@
 
 #include "AudioObjectInterface.hpp"
 #include "AudioObjectRegistry.hpp"
+#include "Balance.hpp"
 #include "CFStringUtils.hpp"
 #include "Constants.hpp"
 #include "DataDestination.hpp"
@@ -53,6 +54,8 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
                                           kAudioObjectPropertyElementMain);
     inputDataSource_ = registry.Construct<DataSource>(
         id, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain);
+    inputBalance_ = registry.Construct<Balance>(
+        id, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain);
 
     // Create output stream and its controls
     outputStream_ = registry.Construct<Stream>(id, Direction::Output,
@@ -63,6 +66,8 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
     outputMute_ = registry.Construct<Mute>(id, kAudioObjectPropertyScopeOutput,
                                            kAudioObjectPropertyElementMain);
     outputDataSource_ = registry.Construct<DataSource>(
+        id, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain);
+    outputBalance_ = registry.Construct<Balance>(
         id, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain);
 
     // Create playthrough data destination
@@ -771,16 +776,10 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
   }
 
   UInt32 GetControlListSize(AudioObjectPropertyScope scope) const {
-    switch (scope) {
-      case kAudioObjectPropertyScopeGlobal:
-        return sizeof(AudioObjectID);  // playthrough destination
-      case kAudioObjectPropertyScopeInput:
-        return 3 * sizeof(AudioObjectID);  // volume, mute, datasource
-      case kAudioObjectPropertyScopeOutput:
-        return 3 * sizeof(AudioObjectID);  // volume, mute, datasource
-      default:
-        return 0;
-    }
+    // Return all controls regardless of scope, as per AudioServerPlugIn spec
+    // input (volume, mute, datasource, balance) + output (volume, mute,
+    // datasource, balance) + playthrough
+    return 9 * sizeof(AudioObjectID);
   }
 
   void GetControlList(AudioObjectPropertyScope scope,
@@ -788,34 +787,38 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
                       UInt32* outDataSize,
                       void* outData) const {
     AudioObjectID* controls = static_cast<AudioObjectID*>(outData);
-    UInt32 count = 0;
 
-    switch (scope) {
-      case kAudioObjectPropertyScopeGlobal:
-        if (inDataSize >= sizeof(AudioObjectID)) {
-          controls[0] = playthroughDestination_->Id();
-          count = 1;
-        }
-        break;
-      case kAudioObjectPropertyScopeInput:
-        if (inDataSize >= 3 * sizeof(AudioObjectID)) {
-          controls[0] = inputVolume_->Id();
-          controls[1] = inputMute_->Id();
-          controls[2] = inputDataSource_->Id();
-          count = 3;
-        }
-        break;
-      case kAudioObjectPropertyScopeOutput:
-        if (inDataSize >= 3 * sizeof(AudioObjectID)) {
-          controls[0] = outputVolume_->Id();
-          controls[1] = outputMute_->Id();
-          controls[2] = outputDataSource_->Id();
-          count = 3;
-        }
-        break;
+    // Calculate how many items can fit in the buffer
+    UInt32 maxCount = inDataSize / sizeof(AudioObjectID);
+    if (maxCount > 9) {
+      maxCount = 9;
     }
 
-    *outDataSize = count * sizeof(AudioObjectID);
+    // Return all controls regardless of scope, as per AudioServerPlugIn spec
+    // Order: input (volume, mute, datasource, balance), output (volume, mute,
+    // datasource, balance), playthrough
+    UInt32 index = 0;
+
+    if (index < maxCount)
+      controls[index++] = inputVolume_->Id();
+    if (index < maxCount)
+      controls[index++] = inputMute_->Id();
+    if (index < maxCount)
+      controls[index++] = inputDataSource_->Id();
+    if (index < maxCount)
+      controls[index++] = inputBalance_->Id();
+    if (index < maxCount)
+      controls[index++] = outputVolume_->Id();
+    if (index < maxCount)
+      controls[index++] = outputMute_->Id();
+    if (index < maxCount)
+      controls[index++] = outputDataSource_->Id();
+    if (index < maxCount)
+      controls[index++] = outputBalance_->Id();
+    if (index < maxCount)
+      controls[index++] = playthroughDestination_->Id();
+
+    *outDataSize = index * sizeof(AudioObjectID);
   }
 
   const AudioObjectID ownerId_;
@@ -837,9 +840,11 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
   std::shared_ptr<Volume> inputVolume_;
   std::shared_ptr<Mute> inputMute_;
   std::shared_ptr<DataSource> inputDataSource_;
+  std::shared_ptr<Balance> inputBalance_;
   std::shared_ptr<Volume> outputVolume_;
   std::shared_ptr<Mute> outputMute_;
   std::shared_ptr<DataSource> outputDataSource_;
+  std::shared_ptr<Balance> outputBalance_;
   std::shared_ptr<DataDestination> playthroughDestination_;
 };
 

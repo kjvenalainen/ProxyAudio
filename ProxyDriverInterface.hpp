@@ -651,6 +651,8 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
 
 #pragma endregion
 
+  AudioServerPlugInHostRef GetHost() const { return host_; }
+
  private:
   std::shared_ptr<Device> GetDevice(const AudioObjectID inDeviceObjectID) {
     auto devicePtr = GetRegistry()[inDeviceObjectID];

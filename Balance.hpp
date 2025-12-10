@@ -16,26 +16,26 @@
 
 namespace ProxyAudio {
 
-class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
+class Balance : public AudioObjectInterface, public AudioObjectRegistryRef {
  public:
-  Mute(AudioObjectID id,
-       AudioObjectRegistry& registry,
-       AudioObjectID ownerId,
-       AudioObjectPropertyScope scope,
-       AudioObjectPropertyElement element)
-      : AudioObjectInterface(id, kAudioMuteControlClassID),
+  Balance(AudioObjectID id,
+          AudioObjectRegistry& registry,
+          AudioObjectID ownerId,
+          AudioObjectPropertyScope scope,
+          AudioObjectPropertyElement element)
+      : AudioObjectInterface(id, kAudioStereoPanControlClassID),
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
         scope_(scope),
         element_(element),
-        value_(false) {
+        value_(0.5f) {  // Default to center (0.5 = balanced)
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
   }
 
-  Mute(const Mute& other) noexcept = delete;
-  Mute(Mute&& other) noexcept = delete;
+  Balance(const Balance& other) noexcept = delete;
+  Balance(Balance&& other) noexcept = delete;
 
-  ~Mute() = default;
+  ~Balance() = default;
 
   Boolean HasProperty(pid_t inClientProcessID,
                       const AudioObjectPropertyAddress* inAddress) override {
@@ -46,7 +46,8 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioObjectPropertyOwnedObjects:
       case kAudioControlPropertyScope:
       case kAudioControlPropertyElement:
-      case kAudioBooleanControlPropertyValue:
+      case kAudioStereoPanControlPropertyValue:
+      case kAudioStereoPanControlPropertyPanningChannels:
         return true;
       default:
         return false;
@@ -63,10 +64,11 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioObjectPropertyOwnedObjects:
       case kAudioControlPropertyScope:
       case kAudioControlPropertyElement:
+      case kAudioStereoPanControlPropertyPanningChannels:
         *outIsSettable = false;
         break;
 
-      case kAudioBooleanControlPropertyValue:
+      case kAudioStereoPanControlPropertyValue:
         *outIsSettable = true;
         break;
 
@@ -109,8 +111,12 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
         *outDataSize = sizeof(AudioObjectPropertyElement);
         break;
 
-      case kAudioBooleanControlPropertyValue:
-        *outDataSize = sizeof(UInt32);
+      case kAudioStereoPanControlPropertyValue:
+        *outDataSize = sizeof(Float32);
+        break;
+
+      case kAudioStereoPanControlPropertyPanningChannels:
+        *outDataSize = 2 * sizeof(UInt32);
         break;
 
       default:
@@ -132,21 +138,21 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
     switch (inAddress->mSelector) {
       case kAudioObjectPropertyBaseClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
-               BadDataSizeError("Mute kAudioObjectPropertyBaseClass"));
-        *((AudioClassID*)outData) = kAudioBooleanControlClassID;
+               BadDataSizeError("Balance kAudioObjectPropertyBaseClass"));
+        *((AudioClassID*)outData) = kAudioLevelControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 
       case kAudioObjectPropertyClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
-               BadDataSizeError("Mute kAudioObjectPropertyClass"));
-        *((AudioClassID*)outData) = kAudioMuteControlClassID;
+               BadDataSizeError("Balance kAudioObjectPropertyClass"));
+        *((AudioClassID*)outData) = kAudioStereoPanControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 
       case kAudioObjectPropertyOwner:
         EXPECT(inDataSize >= sizeof(AudioObjectID),
-               BadDataSizeError("Mute kAudioObjectPropertyOwner"));
+               BadDataSizeError("Balance kAudioObjectPropertyOwner"));
         *((AudioObjectID*)outData) = ownerId_;
         *outDataSize = sizeof(AudioObjectID);
         break;
@@ -157,23 +163,34 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
 
       case kAudioControlPropertyScope:
         EXPECT(inDataSize >= sizeof(AudioObjectPropertyScope),
-               BadDataSizeError("Mute kAudioControlPropertyScope"));
+               BadDataSizeError("Balance kAudioControlPropertyScope"));
         *((AudioObjectPropertyScope*)outData) = scope_;
         *outDataSize = sizeof(AudioObjectPropertyScope);
         break;
 
       case kAudioControlPropertyElement:
         EXPECT(inDataSize >= sizeof(AudioObjectPropertyElement),
-               BadDataSizeError("Mute kAudioControlPropertyElement"));
+               BadDataSizeError("Balance kAudioControlPropertyElement"));
         *((AudioObjectPropertyElement*)outData) = element_;
         *outDataSize = sizeof(AudioObjectPropertyElement);
         break;
 
-      case kAudioBooleanControlPropertyValue:
-        EXPECT(inDataSize >= sizeof(UInt32),
-               BadDataSizeError("Mute kAudioBooleanControlPropertyValue"));
-        *((UInt32*)outData) = value_.load() ? 1 : 0;
-        *outDataSize = sizeof(UInt32);
+      case kAudioStereoPanControlPropertyValue:
+        EXPECT(inDataSize >= sizeof(Float32),
+               BadDataSizeError("Balance kAudioStereoPanControlPropertyValue"));
+        *((Float32*)outData) = value_.load();
+        *outDataSize = sizeof(Float32);
+        break;
+
+      case kAudioStereoPanControlPropertyPanningChannels:
+        EXPECT(inDataSize >= 2 * sizeof(UInt32),
+               BadDataSizeError("Balance kAudioStereoPanControlPropertyPanningChannels"));
+        {
+          UInt32* channels = static_cast<UInt32*>(outData);
+          channels[0] = 1;  // Left channel
+          channels[1] = 2;  // Right channel
+        }
+        *outDataSize = 2 * sizeof(UInt32);
         break;
 
       default:
@@ -192,11 +209,19 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
                            UInt32 inDataSize,
                            const void* inData) override {
     switch (inAddress->mSelector) {
-      case kAudioBooleanControlPropertyValue:
-        EXPECT(inDataSize == sizeof(UInt32),
-               BadDataSizeError(
-                   "Mute SetPropertyData kAudioBooleanControlPropertyValue"));
-        value_ = (*((const UInt32*)inData) != 0);
+      case kAudioStereoPanControlPropertyValue:
+        EXPECT(inDataSize == sizeof(Float32),
+               BadDataSizeError("Balance SetPropertyData kAudioStereoPanControlPropertyValue"));
+        {
+          Float32 newValue = *((const Float32*)inData);
+          // Clamp to 0.0 (full left) to 1.0 (full right), 0.5 is center
+          if (newValue < 0.0f) {
+            newValue = 0.0f;
+          } else if (newValue > 1.0f) {
+            newValue = 1.0f;
+          }
+          value_ = newValue;
+        }
         break;
 
       default:
@@ -212,7 +237,8 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
   const AudioObjectID ownerId_;
   AudioObjectPropertyScope scope_;
   AudioObjectPropertyElement element_;
-  std::atomic<bool> value_;
+  std::atomic<Float32> value_;
 };
 
 }  // namespace ProxyAudio
+

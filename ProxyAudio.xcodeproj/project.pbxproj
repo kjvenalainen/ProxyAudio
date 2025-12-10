@@ -30,6 +30,7 @@
 		503561042E7A7D2E00F4DBB6 /* Property.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Property.hpp; sourceTree = "<group>"; };
 		503561052E7A7D2E00F4DBB6 /* PropertyAddress.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PropertyAddress.hpp; sourceTree = "<group>"; };
 		508070842E7A640E00BFF9B2 /* ProxyAudio.driver */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProxyAudio.driver; sourceTree = BUILT_PRODUCTS_DIR; };
+		50A14E012EE93D1E006555B5 /* Balance.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Balance.hpp; sourceTree = "<group>"; };
 		50AF5CFE2EA97B2D00C98275 /* Box.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Box.hpp; sourceTree = "<group>"; };
 		50AF5CFF2EA97B2D00C98275 /* Device.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Device.hpp; sourceTree = "<group>"; };
 		50AF5D002EA9837600C98275 /* AudioObjectRegistry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AudioObjectRegistry.hpp; sourceTree = "<group>"; };
@@ -62,6 +63,7 @@
 		5080707B2E7A640E00BFF9B2 = {
 			isa = PBXGroup;
 			children = (
+				50A14E012EE93D1E006555B5 /* Balance.hpp */,
 				503436E82EE87EA8005072BA /* Constants.hpp */,
 				50005B8A2ED2830C000A062C /* CFStringUtils.hpp */,
 				50005B892ED280E6000A062C /* DataDestination.hpp */,

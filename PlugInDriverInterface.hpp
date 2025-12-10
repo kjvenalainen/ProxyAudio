@@ -347,10 +347,86 @@ class PlugInDriverInterface {
                             "SetPropertyData: no address");
       }
 
-      auto& registry = GetDriver(inDriver).GetRegistry();
-      return registry[inObjectID]->SetPropertyData(
+      auto& driver = GetDriver(inDriver);
+      auto& registry = driver.GetRegistry();
+      OSStatus result = registry[inObjectID]->SetPropertyData(
           inClientProcessID, inAddress, inQualifierDataSize, inQualifierData,
           inDataSize, inData);
+
+      // Notify the host about property changes for volume and mute controls
+      if (result == kAudioHardwareNoError) {
+        auto obj = registry[inObjectID];
+        if (obj != nullptr) {
+          AudioClassID classId = obj->ClassId();
+          AudioServerPlugInHostRef host = driver.GetHost();
+
+          // For volume controls, notify about both scalar and decibel value
+          // changes
+          if (classId == kAudioVolumeControlClassID) {
+            if (inAddress->mSelector == kAudioLevelControlPropertyScalarValue ||
+                inAddress->mSelector ==
+                    kAudioLevelControlPropertyDecibelValue) {
+              AudioObjectPropertyAddress changedAddresses[2];
+              changedAddresses[0].mSelector =
+                  kAudioLevelControlPropertyScalarValue;
+              changedAddresses[0].mScope = kAudioObjectPropertyScopeGlobal;
+              changedAddresses[0].mElement = kAudioObjectPropertyElementMain;
+              changedAddresses[1].mSelector =
+                  kAudioLevelControlPropertyDecibelValue;
+              changedAddresses[1].mScope = kAudioObjectPropertyScopeGlobal;
+              changedAddresses[1].mElement = kAudioObjectPropertyElementMain;
+
+              if (host != nullptr) {
+                host->PropertiesChanged(host, inObjectID, 2, changedAddresses);
+              }
+            }
+          }
+          // For mute controls, notify about value change
+          else if (classId == kAudioMuteControlClassID) {
+            if (inAddress->mSelector == kAudioBooleanControlPropertyValue) {
+              AudioObjectPropertyAddress changedAddress;
+              changedAddress.mSelector = kAudioBooleanControlPropertyValue;
+              changedAddress.mScope = kAudioObjectPropertyScopeGlobal;
+              changedAddress.mElement = kAudioObjectPropertyElementMain;
+
+              if (host != nullptr) {
+                host->PropertiesChanged(host, inObjectID, 1, &changedAddress);
+              }
+            }
+          }
+          // For balance/pan controls, notify about value change
+          else if (classId == kAudioStereoPanControlClassID) {
+            if (inAddress->mSelector == kAudioStereoPanControlPropertyValue) {
+              AudioObjectPropertyAddress changedAddress;
+              changedAddress.mSelector = kAudioStereoPanControlPropertyValue;
+              changedAddress.mScope = kAudioObjectPropertyScopeGlobal;
+              changedAddress.mElement = kAudioObjectPropertyElementMain;
+
+              if (host != nullptr) {
+                host->PropertiesChanged(host, inObjectID, 1, &changedAddress);
+              }
+            }
+          }
+          // For selector controls (data source, data destination), notify about
+          // current item change
+          else if (classId == kAudioSelectorControlClassID) {
+            if (inAddress->mSelector ==
+                kAudioSelectorControlPropertyCurrentItem) {
+              AudioObjectPropertyAddress changedAddress;
+              changedAddress.mSelector =
+                  kAudioSelectorControlPropertyCurrentItem;
+              changedAddress.mScope = kAudioObjectPropertyScopeGlobal;
+              changedAddress.mElement = kAudioObjectPropertyElementMain;
+
+              if (host != nullptr) {
+                host->PropertiesChanged(host, inObjectID, 1, &changedAddress);
+              }
+            }
+          }
+        }
+      }
+
+      return result;
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();

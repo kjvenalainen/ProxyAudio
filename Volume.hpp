@@ -25,12 +25,12 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
          AudioObjectID ownerId,
          AudioObjectPropertyScope scope,
          AudioObjectPropertyElement element)
-      : AudioObjectInterface(id, kAudioLevelControlClassID),
+      : AudioObjectInterface(id, kAudioVolumeControlClassID),
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
         scope_(scope),
         element_(element),
-        scalarValue_(1.0) {
+        scalarValue_(1.0f) {  // Default to 1.0 scalar = 0dB (unity gain)
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
   }
 
@@ -41,6 +41,7 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
 
   Boolean HasProperty(pid_t inClientProcessID,
                       const AudioObjectPropertyAddress* inAddress) override {
+    Boolean result = false;
     switch (inAddress->mSelector) {
       case kAudioObjectPropertyBaseClass:
       case kAudioObjectPropertyClass:
@@ -53,10 +54,14 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioLevelControlPropertyDecibelRange:
       case kAudioLevelControlPropertyConvertScalarToDecibels:
       case kAudioLevelControlPropertyConvertDecibelsToScalar:
-        return true;
+        result = true;
+        break;
       default:
-        return false;
+        result = false;
+        break;
     }
+
+    return result;
   }
 
   OSStatus IsPropertySettable(pid_t inClientProcessID,
@@ -159,14 +164,14 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioObjectPropertyBaseClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
                BadDataSizeError("Volume kAudioObjectPropertyBaseClass"));
-        *((AudioClassID*)outData) = kAudioControlClassID;
+        *((AudioClassID*)outData) = kAudioLevelControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 
       case kAudioObjectPropertyClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
                BadDataSizeError("Volume kAudioObjectPropertyClass"));
-        *((AudioClassID*)outData) = kAudioLevelControlClassID;
+        *((AudioClassID*)outData) = kAudioVolumeControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 
@@ -325,7 +330,7 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
   }
 
   static constexpr Float32 MIN_DB = -96.0f;
-  static constexpr Float32 MAX_DB = 6.0f;
+  static constexpr Float32 MAX_DB = 0.0f;  // Scalar 1.0 = 0dB (unity gain)
 
   const AudioObjectID ownerId_;
   AudioObjectPropertyScope scope_;
