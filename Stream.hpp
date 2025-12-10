@@ -300,17 +300,33 @@ class Stream : public AudioObjectInterface, public AudioObjectRegistryRef {
     return S_OK;
   }
 
-  OSStatus SetPropertyData(pid_t inClientProcessID,
-                           const AudioObjectPropertyAddress* inAddress,
-                           UInt32 inQualifierDataSize,
-                           const void* inQualifierData,
-                           UInt32 inDataSize,
-                           const void* inData) override {
+  OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     switch (inAddress->mSelector) {
       case kAudioStreamPropertyIsActive:
         EXPECT(inDataSize == sizeof(UInt32),
                BadDataSizeError("Stream SetPropertyData kAudioStreamPropertyIsActive"));
-        isActive_ = (*((const UInt32*)inData) != 0);
+        {
+          bool newValue = (*((const UInt32*)inData) != 0);
+          bool oldValue = isActive_.load();
+
+          if (oldValue != newValue) {
+            isActive_ = newValue;
+
+            // Notify about active state change
+            AudioObjectPropertyAddress addr;
+            addr.mSelector = kAudioStreamPropertyIsActive;
+            addr.mScope = kAudioObjectPropertyScopeGlobal;
+            addr.mElement = kAudioObjectPropertyElementMain;
+            changedAddresses.push_back(addr);
+          }
+        }
         break;
 
       case kAudioStreamPropertyVirtualFormat:
@@ -325,8 +341,26 @@ class Stream : public AudioObjectInterface, public AudioObjectRegistryRef {
               newFormat->mChannelsPerFrame == 2 &&
               (newFormat->mSampleRate == 44100.0 ||
                newFormat->mSampleRate == 48000.0)) {
+            AudioStreamBasicDescription oldFormat = format_;
             format_ = *newFormat;
             sampleRate_ = format_.mSampleRate;
+
+            // Check if format actually changed
+            if (memcmp(&oldFormat, &format_,
+                       sizeof(AudioStreamBasicDescription)) != 0) {
+              // Notify about format changes
+              AudioObjectPropertyAddress addr;
+              addr.mScope = kAudioObjectPropertyScopeGlobal;
+              addr.mElement = kAudioObjectPropertyElementMain;
+
+              if (inAddress->mSelector == kAudioStreamPropertyVirtualFormat) {
+                addr.mSelector = kAudioStreamPropertyVirtualFormat;
+                changedAddresses.push_back(addr);
+              } else {
+                addr.mSelector = kAudioStreamPropertyPhysicalFormat;
+                changedAddresses.push_back(addr);
+              }
+            }
           } else {
             throw ErrorWithCode(kAudioHardwareIllegalOperationError,
                                 "Unsupported stream format");

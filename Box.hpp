@@ -411,18 +411,24 @@ class Box : public AudioObjectInterface, public AudioObjectRegistryRef {
     return S_OK;
   }
 
-  OSStatus SetPropertyData(pid_t inClientProcessID,
-                           const AudioObjectPropertyAddress* inAddress,
-                           UInt32 inQualifierDataSize,
-                           const void* inQualifierData,
-                           UInt32 inDataSize,
-                           const void* inData) override {
+  OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     switch (inAddress->mSelector) {
       case kAudioObjectPropertyName:
         // Allow setting the box name
         EXPECT(inDataSize == sizeof(CFStringRef),
                BadDataSizeError("Box kAudioObjectPropertyName"));
         name_ = CFStringToString(*((CFStringRef*)inData));
+
+        changedAddresses.push_back({kAudioObjectPropertyName,
+                                    kAudioObjectPropertyScopeGlobal,
+                                    kAudioObjectPropertyElementMain});
         break;
 
       case kAudioObjectPropertyIdentify:
@@ -432,12 +438,22 @@ class Box : public AudioObjectInterface, public AudioObjectRegistryRef {
                BadDataSizeError("Box kAudioObjectPropertyIdentify"));
         break;
 
-      case kAudioBoxPropertyAcquired:
+      case kAudioBoxPropertyAcquired: {
         // Setting acquired state
         EXPECT(inDataSize == sizeof(UInt32),
                BadDataSizeError("Box kAudioBoxPropertyAcquired"));
-        acquired_ = (*((UInt32*)inData) != 0);
+
+        const bool newAcquired = (*((UInt32*)inData) != 0);
+        const bool oldAcquired = acquired_.exchange(newAcquired);
+
+        if (newAcquired != oldAcquired) {
+          changedAddresses.push_back({kAudioBoxPropertyAcquired,
+                                      kAudioObjectPropertyScopeGlobal,
+                                      kAudioObjectPropertyElementMain});
+        }
+
         break;
+      }
 
       default:
         throw ErrorWithCode(kAudioHardwareUnknownPropertyError,

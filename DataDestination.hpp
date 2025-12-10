@@ -24,14 +24,11 @@ class DataDestination : public AudioObjectInterface, public AudioObjectRegistryR
  public:
   DataDestination(AudioObjectID id,
                   AudioObjectRegistry& registry,
-                  AudioObjectID ownerId,
-                  AudioObjectPropertyScope scope,
-                  AudioObjectPropertyElement element)
+                  AudioObjectID ownerId)
       : AudioObjectInterface(id, kAudioSelectorControlClassID),
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
-        scope_(scope),
-        element_(element),
+        scope_(kAudioObjectPropertyScopePlayThrough),
         currentItem_(0) {
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
 
@@ -185,7 +182,8 @@ class DataDestination : public AudioObjectInterface, public AudioObjectRegistryR
       case kAudioControlPropertyElement:
         EXPECT(inDataSize >= sizeof(AudioObjectPropertyElement),
                BadDataSizeError("DataDestination kAudioControlPropertyElement"));
-        *((AudioObjectPropertyElement*)outData) = element_;
+        *((AudioObjectPropertyElement*)outData) =
+            kAudioObjectPropertyElementMain;
         *outDataSize = sizeof(AudioObjectPropertyElement);
         break;
 
@@ -238,12 +236,14 @@ class DataDestination : public AudioObjectInterface, public AudioObjectRegistryR
     return S_OK;
   }
 
-  OSStatus SetPropertyData(pid_t inClientProcessID,
-                           const AudioObjectPropertyAddress* inAddress,
-                           UInt32 inQualifierDataSize,
-                           const void* inQualifierData,
-                           UInt32 inDataSize,
-                           const void* inData) override {
+  OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     switch (inAddress->mSelector) {
       case kAudioSelectorControlPropertyCurrentItem:
         EXPECT(inDataSize == sizeof(UInt32),
@@ -251,7 +251,17 @@ class DataDestination : public AudioObjectInterface, public AudioObjectRegistryR
         {
           UInt32 newItem = *((const UInt32*)inData);
           if (newItem < items_.size()) {
-            currentItem_ = newItem;
+            UInt32 oldItem = currentItem_.load();
+            if (oldItem != newItem) {
+              currentItem_ = newItem;
+
+              // Notify about current item change
+              AudioObjectPropertyAddress addr;
+              addr.mSelector = kAudioSelectorControlPropertyCurrentItem;
+              addr.mScope = kAudioObjectPropertyScopeGlobal;
+              addr.mElement = kAudioObjectPropertyElementMain;
+              changedAddresses.push_back(addr);
+            }
           } else {
             throw ErrorWithCode(kAudioHardwareIllegalOperationError,
                                 "Invalid item index");
@@ -270,8 +280,7 @@ class DataDestination : public AudioObjectInterface, public AudioObjectRegistryR
 
  private:
   const AudioObjectID ownerId_;
-  AudioObjectPropertyScope scope_;
-  AudioObjectPropertyElement element_;
+  const AudioObjectPropertyScope scope_;
   std::atomic<UInt32> currentItem_;
   std::vector<std::string> items_;
 };

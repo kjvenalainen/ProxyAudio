@@ -7,13 +7,14 @@
 #pragma once
 
 #include <CoreAudio/AudioServerPlugIn.h>
-#include <cmath>
 
 #include <atomic>
+#include <cmath>
 #include <mutex>
 
 #include "AudioObjectInterface.hpp"
 #include "AudioObjectRegistry.hpp"
+#include "Constants.hpp"
 #include "Error.hpp"
 
 namespace ProxyAudio {
@@ -23,13 +24,11 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
   Volume(AudioObjectID id,
          AudioObjectRegistry& registry,
          AudioObjectID ownerId,
-         AudioObjectPropertyScope scope,
-         AudioObjectPropertyElement element)
+         Direction direction)
       : AudioObjectInterface(id, kAudioVolumeControlClassID),
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
-        scope_(scope),
-        element_(element),
+        scope_(DirectionToScope(direction)),
         scalarValue_(1.0f) {  // Default to 1.0 scalar = 0dB (unity gain)
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
   }
@@ -196,7 +195,8 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioControlPropertyElement:
         EXPECT(inDataSize >= sizeof(AudioObjectPropertyElement),
                BadDataSizeError("Volume kAudioControlPropertyElement"));
-        *((AudioObjectPropertyElement*)outData) = element_;
+        *((AudioObjectPropertyElement*)outData) =
+            kAudioObjectPropertyElementMain;
         *outDataSize = sizeof(AudioObjectPropertyElement);
         break;
 
@@ -262,12 +262,14 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
     return S_OK;
   }
 
-  OSStatus SetPropertyData(pid_t inClientProcessID,
-                           const AudioObjectPropertyAddress* inAddress,
-                           UInt32 inQualifierDataSize,
-                           const void* inQualifierData,
-                           UInt32 inDataSize,
-                           const void* inData) override {
+  OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     switch (inAddress->mSelector) {
       case kAudioLevelControlPropertyScalarValue:
         EXPECT(inDataSize == sizeof(Float32),
@@ -279,7 +281,22 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
           } else if (newValue > 1.0f) {
             newValue = 1.0f;
           }
-          scalarValue_ = newValue;
+
+          Float32 oldValue = scalarValue_.load();
+          if (oldValue != newValue) {
+            scalarValue_ = newValue;
+
+            // Notify about both scalar and decibel value changes
+            AudioObjectPropertyAddress addr;
+            addr.mScope = kAudioObjectPropertyScopeGlobal;
+            addr.mElement = kAudioObjectPropertyElementMain;
+
+            addr.mSelector = kAudioLevelControlPropertyScalarValue;
+            changedAddresses.push_back(addr);
+
+            addr.mSelector = kAudioLevelControlPropertyDecibelValue;
+            changedAddresses.push_back(addr);
+          }
         }
         break;
 
@@ -293,7 +310,24 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
           } else if (db > MAX_DB) {
             db = MAX_DB;
           }
-          scalarValue_ = DecibelsToScalar(db);
+
+          Float32 newScalar = DecibelsToScalar(db);
+          Float32 oldScalar = scalarValue_.load();
+
+          if (oldScalar != newScalar) {
+            scalarValue_ = newScalar;
+
+            // Notify about both scalar and decibel value changes
+            AudioObjectPropertyAddress addr;
+            addr.mScope = kAudioObjectPropertyScopeGlobal;
+            addr.mElement = kAudioObjectPropertyElementMain;
+
+            addr.mSelector = kAudioLevelControlPropertyScalarValue;
+            changedAddresses.push_back(addr);
+
+            addr.mSelector = kAudioLevelControlPropertyDecibelValue;
+            changedAddresses.push_back(addr);
+          }
         }
         break;
 
@@ -333,8 +367,7 @@ class Volume : public AudioObjectInterface, public AudioObjectRegistryRef {
   static constexpr Float32 MAX_DB = 0.0f;  // Scalar 1.0 = 0dB (unity gain)
 
   const AudioObjectID ownerId_;
-  AudioObjectPropertyScope scope_;
-  AudioObjectPropertyElement element_;
+  const AudioObjectPropertyScope scope_;
   std::atomic<Float32> scalarValue_;
 };
 

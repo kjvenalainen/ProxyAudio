@@ -6,7 +6,10 @@
 
 #pragma once
 
+#include <CoreAudio/AudioHardwareBase.h>
 #include <CoreAudio/AudioServerPlugIn.h>
+
+#include <vector>
 
 namespace ProxyAudio {
 
@@ -37,12 +40,14 @@ class AudioObjectInterface {
                                    UInt32* outDataSize,
                                    void* outData) = 0;
 
-  virtual OSStatus SetPropertyData(pid_t inClientProcessID,
-                                   const AudioObjectPropertyAddress* inAddress,
-                                   UInt32 inQualifierDataSize,
-                                   const void* inQualifierData,
-                                   UInt32 inDataSize,
-                                   const void* inData) = 0;
+  virtual OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) = 0;
 
   // All audio objects have an AudioObjectID which should be unique within
   // the plug-in.

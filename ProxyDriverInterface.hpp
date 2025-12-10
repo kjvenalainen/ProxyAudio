@@ -627,12 +627,14 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
     }
   }
 
-  OSStatus SetPropertyData(pid_t inClientProcessID,
-                           const AudioObjectPropertyAddress* inAddress,
-                           UInt32 inQualifierDataSize,
-                           const void* inQualifierData,
-                           UInt32 inDataSize,
-                           const void* inData) override {
+  OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     if (inAddress == nullptr) {
       throw ErrorWithCode(kAudioHardwareIllegalOperationError,
                           "SetPropertyData: no address");

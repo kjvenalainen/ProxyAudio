@@ -12,6 +12,7 @@
 
 #include "AudioObjectInterface.hpp"
 #include "AudioObjectRegistry.hpp"
+#include "Constants.hpp"
 #include "Error.hpp"
 
 namespace ProxyAudio {
@@ -21,13 +22,11 @@ class Balance : public AudioObjectInterface, public AudioObjectRegistryRef {
   Balance(AudioObjectID id,
           AudioObjectRegistry& registry,
           AudioObjectID ownerId,
-          AudioObjectPropertyScope scope,
-          AudioObjectPropertyElement element)
+          Direction direction)
       : AudioObjectInterface(id, kAudioStereoPanControlClassID),
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
-        scope_(scope),
-        element_(element),
+        scope_(DirectionToScope(direction)),
         value_(0.5f) {  // Default to center (0.5 = balanced)
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
   }
@@ -171,7 +170,7 @@ class Balance : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioControlPropertyElement:
         EXPECT(inDataSize >= sizeof(AudioObjectPropertyElement),
                BadDataSizeError("Balance kAudioControlPropertyElement"));
-        *((AudioObjectPropertyElement*)outData) = element_;
+        *((AudioObjectPropertyElement*)outData) = kAudioObjectPropertyElementMain;
         *outDataSize = sizeof(AudioObjectPropertyElement);
         break;
 
@@ -207,7 +206,8 @@ class Balance : public AudioObjectInterface, public AudioObjectRegistryRef {
                            UInt32 inQualifierDataSize,
                            const void* inQualifierData,
                            UInt32 inDataSize,
-                           const void* inData) override {
+                           const void* inData,
+                           std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     switch (inAddress->mSelector) {
       case kAudioStereoPanControlPropertyValue:
         EXPECT(inDataSize == sizeof(Float32),
@@ -220,7 +220,18 @@ class Balance : public AudioObjectInterface, public AudioObjectRegistryRef {
           } else if (newValue > 1.0f) {
             newValue = 1.0f;
           }
-          value_ = newValue;
+          
+          Float32 oldValue = value_.load();
+          if (oldValue != newValue) {
+            value_ = newValue;
+            
+            // Notify about value change
+            AudioObjectPropertyAddress addr;
+            addr.mSelector = kAudioStereoPanControlPropertyValue;
+            addr.mScope = kAudioObjectPropertyScopeGlobal;
+            addr.mElement = kAudioObjectPropertyElementMain;
+            changedAddresses.push_back(addr);
+          }
         }
         break;
 
@@ -235,8 +246,7 @@ class Balance : public AudioObjectInterface, public AudioObjectRegistryRef {
 
  private:
   const AudioObjectID ownerId_;
-  AudioObjectPropertyScope scope_;
-  AudioObjectPropertyElement element_;
+  const AudioObjectPropertyScope scope_;
   std::atomic<Float32> value_;
 };
 

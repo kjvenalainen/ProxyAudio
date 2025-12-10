@@ -12,6 +12,7 @@
 
 #include "AudioObjectInterface.hpp"
 #include "AudioObjectRegistry.hpp"
+#include "Constants.hpp"
 #include "Error.hpp"
 
 namespace ProxyAudio {
@@ -21,13 +22,11 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
   Mute(AudioObjectID id,
        AudioObjectRegistry& registry,
        AudioObjectID ownerId,
-       AudioObjectPropertyScope scope,
-       AudioObjectPropertyElement element)
+       Direction direction)
       : AudioObjectInterface(id, kAudioMuteControlClassID),
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
-        scope_(scope),
-        element_(element),
+        scope_(DirectionToScope(direction)),
         value_(false) {
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
   }
@@ -165,7 +164,8 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioControlPropertyElement:
         EXPECT(inDataSize >= sizeof(AudioObjectPropertyElement),
                BadDataSizeError("Mute kAudioControlPropertyElement"));
-        *((AudioObjectPropertyElement*)outData) = element_;
+        *((AudioObjectPropertyElement*)outData) =
+            kAudioObjectPropertyElementMain;
         *outDataSize = sizeof(AudioObjectPropertyElement);
         break;
 
@@ -185,18 +185,34 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
     return S_OK;
   }
 
-  OSStatus SetPropertyData(pid_t inClientProcessID,
-                           const AudioObjectPropertyAddress* inAddress,
-                           UInt32 inQualifierDataSize,
-                           const void* inQualifierData,
-                           UInt32 inDataSize,
-                           const void* inData) override {
+  OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     switch (inAddress->mSelector) {
       case kAudioBooleanControlPropertyValue:
         EXPECT(inDataSize == sizeof(UInt32),
                BadDataSizeError(
                    "Mute SetPropertyData kAudioBooleanControlPropertyValue"));
-        value_ = (*((const UInt32*)inData) != 0);
+        {
+          bool newValue = (*((const UInt32*)inData) != 0);
+          bool oldValue = value_.load();
+
+          if (oldValue != newValue) {
+            value_ = newValue;
+
+            // Notify about value change
+            AudioObjectPropertyAddress addr;
+            addr.mSelector = kAudioBooleanControlPropertyValue;
+            addr.mScope = kAudioObjectPropertyScopeGlobal;
+            addr.mElement = kAudioObjectPropertyElementMain;
+            changedAddresses.push_back(addr);
+          }
+        }
         break;
 
       default:
@@ -210,8 +226,7 @@ class Mute : public AudioObjectInterface, public AudioObjectRegistryRef {
 
  private:
   const AudioObjectID ownerId_;
-  AudioObjectPropertyScope scope_;
-  AudioObjectPropertyElement element_;
+  const AudioObjectPropertyScope scope_;
   std::atomic<bool> value_;
 };
 

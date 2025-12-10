@@ -48,32 +48,21 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
     inputStream_ = registry.Construct<Stream>(id, Direction::Input,
                                               TerminalType::Microphone);
 
-    inputVolume_ = registry.Construct<Volume>(
-        id, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain);
-    inputMute_ = registry.Construct<Mute>(id, kAudioObjectPropertyScopeInput,
-                                          kAudioObjectPropertyElementMain);
-    inputDataSource_ = registry.Construct<DataSource>(
-        id, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain);
-    inputBalance_ = registry.Construct<Balance>(
-        id, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain);
+    inputVolume_ = registry.Construct<Volume>(id, Direction::Input);
+    inputMute_ = registry.Construct<Mute>(id, Direction::Input);
+    inputDataSource_ = registry.Construct<DataSource>(id, Direction::Input);
 
     // Create output stream and its controls
     outputStream_ = registry.Construct<Stream>(id, Direction::Output,
                                                TerminalType::Speaker);
 
-    outputVolume_ = registry.Construct<Volume>(
-        id, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain);
-    outputMute_ = registry.Construct<Mute>(id, kAudioObjectPropertyScopeOutput,
-                                           kAudioObjectPropertyElementMain);
-    outputDataSource_ = registry.Construct<DataSource>(
-        id, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain);
-    outputBalance_ = registry.Construct<Balance>(
-        id, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain);
+    outputVolume_ = registry.Construct<Volume>(id, Direction::Output);
+    outputMute_ = registry.Construct<Mute>(id, Direction::Output);
+    outputDataSource_ = registry.Construct<DataSource>(id, Direction::Output);
+    outputBalance_ = registry.Construct<Balance>(id, Direction::Output);
 
     // Create playthrough data destination
-    playthroughDestination_ = registry.Construct<DataDestination>(
-        id, kAudioObjectPropertyScopePlayThrough,
-        kAudioObjectPropertyElementMain);
+    playthroughDestination_ = registry.Construct<DataDestination>(id);
   }
 
   Device(const Device& other) noexcept = delete;
@@ -501,12 +490,14 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
     return S_OK;
   }
 
-  OSStatus SetPropertyData(pid_t inClientProcessID,
-                           const AudioObjectPropertyAddress* inAddress,
-                           UInt32 inQualifierDataSize,
-                           const void* inQualifierData,
-                           UInt32 inDataSize,
-                           const void* inData) override {
+  OSStatus SetPropertyData(
+      pid_t inClientProcessID,
+      const AudioObjectPropertyAddress* inAddress,
+      UInt32 inQualifierDataSize,
+      const void* inQualifierData,
+      UInt32 inDataSize,
+      const void* inData,
+      std::vector<AudioObjectPropertyAddress>& changedAddresses) override {
     switch (inAddress->mSelector) {
       case kAudioDevicePropertyNominalSampleRate:
         EXPECT(inDataSize == sizeof(Float64),
@@ -515,9 +506,22 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
         {
           Float64 newRate = *((const Float64*)inData);
           if (newRate == 44100.0 || newRate == 48000.0) {
-            std::lock_guard<std::mutex> lock(ioMutex_);
-            sampleRate_ = newRate;
-            hostTicksPerFrame_ = ComputeHostTicksPerFrame(sampleRate_);
+            Float64 oldRate;
+            {
+              std::lock_guard<std::mutex> lock(ioMutex_);
+              oldRate = sampleRate_;
+              sampleRate_ = newRate;
+              hostTicksPerFrame_ = ComputeHostTicksPerFrame(sampleRate_);
+            }
+
+            if (oldRate != newRate) {
+              // Notify about sample rate change
+              AudioObjectPropertyAddress addr;
+              addr.mSelector = kAudioDevicePropertyNominalSampleRate;
+              addr.mScope = kAudioObjectPropertyScopeGlobal;
+              addr.mElement = kAudioObjectPropertyElementMain;
+              changedAddresses.push_back(addr);
+            }
           } else {
             throw ErrorWithCode(kAudioHardwareIllegalOperationError,
                                 "Unsupported sample rate");
@@ -806,8 +810,6 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
     if (index < maxCount)
       controls[index++] = inputDataSource_->Id();
     if (index < maxCount)
-      controls[index++] = inputBalance_->Id();
-    if (index < maxCount)
       controls[index++] = outputVolume_->Id();
     if (index < maxCount)
       controls[index++] = outputMute_->Id();
@@ -840,7 +842,6 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
   std::shared_ptr<Volume> inputVolume_;
   std::shared_ptr<Mute> inputMute_;
   std::shared_ptr<DataSource> inputDataSource_;
-  std::shared_ptr<Balance> inputBalance_;
   std::shared_ptr<Volume> outputVolume_;
   std::shared_ptr<Mute> outputMute_;
   std::shared_ptr<DataSource> outputDataSource_;

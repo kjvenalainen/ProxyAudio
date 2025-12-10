@@ -20,6 +20,12 @@ enum class Direction : unsigned int {
   Input = 1,
 };
 
+// Helper function to convert Direction to AudioObjectPropertyScope
+inline AudioObjectPropertyScope DirectionToScope(Direction direction) {
+  return (direction == Direction::Input) ? kAudioObjectPropertyScopeInput
+                                          : kAudioObjectPropertyScopeOutput;
+}
+
 // Corresponds to the various terminal types defined in
 // <CoreAudio/AudioHardwareBase.h>. Such as `kAudioStreamTerminalTypeSpeaker` or
 // `kAudioStreamTerminalTypeMicrophone`.
