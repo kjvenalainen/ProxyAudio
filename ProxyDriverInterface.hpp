@@ -21,6 +21,7 @@
 #include "AudioObjectRegistry.hpp"
 #include "Box.hpp"
 #include "CFSharedPtr.hpp"
+#include "Constants.hpp"
 #include "Device.hpp"
 #include "Error.hpp"
 #include "PlugInDriverInterface.hpp"
@@ -50,7 +51,14 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
   ProxyDriverInterface(AudioObjectID id, AudioObjectRegistry& registry)
       : AudioObjectInterface(id, kAudioPlugInClassID),
         AudioObjectRegistryRef(registry),
-        box_(registry.Construct<Box>()) {}
+        box_(registry.Construct<Box>(this->Id(),
+                                     "ProxyAudio Box",
+                                     "ProxyAudioBoxModel",
+                                     "ProxyAudio",
+                                     "ProxyAudioSerialNumber",
+                                     "ProxyAudioFirmwareVersion",
+                                     "ProxyAudioBoxUID",
+                                     TransportType::Virtual)) {}
 
   virtual ~ProxyDriverInterface() override = default;
 
@@ -384,10 +392,11 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
         return S_OK;
 
       case kAudioObjectPropertyOwnedObjects: {
-        // TODO: Check actual box acquired state from registry
-        const bool boxAcquired = true;
-        *outDataSize =
-            boxAcquired ? 2 * sizeof(AudioObjectID) : sizeof(AudioObjectID);
+        const bool boxAcquired = box_->Acquired();
+        *outDataSize = boxAcquired
+                           ? sizeof(AudioObjectID) +
+                                 box_->Devices().size() * sizeof(AudioObjectID)
+                           : sizeof(AudioObjectID);
         return S_OK;
       }
 
@@ -400,9 +409,9 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
         return S_OK;
 
       case kAudioPlugInPropertyDeviceList: {
-        // TODO: Check actual box acquired state from registry
-        const bool boxAcquired = true;
-        *outDataSize = boxAcquired ? sizeof(AudioObjectID) : 0;
+        const bool boxAcquired = box_->Acquired();
+        *outDataSize =
+            boxAcquired ? box_->Devices().size() * sizeof(AudioObjectID) : 0;
         return S_OK;
       }
 

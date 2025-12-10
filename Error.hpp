@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <CoreAudio/AudioHardwareBase.h>
+
 #include <cstdint>
 #include <exception>
 #include <sstream>
@@ -14,6 +16,11 @@
 #include "Utils.hpp"
 
 namespace ProxyAudio {
+
+#define EXPECT(condition, exception) \
+  if (!(condition)) {                \
+    throw exception;                 \
+  }
 
 class ErrorWithCode : public std::exception {
  public:
@@ -38,6 +45,14 @@ class ErrorWithCode : public std::exception {
 
   uint32_t code_;
   std::string message_;
+};
+
+// Error thrown when the data size is not enough for the property.
+class BadDataSizeError : public ErrorWithCode {
+ public:
+  BadDataSizeError(
+      const std::string& message = "Not enough space for return data.")
+      : ErrorWithCode(kAudioHardwareBadPropertySizeError, message) {}
 };
 
 }  // namespace ProxyAudio

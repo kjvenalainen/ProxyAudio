@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "AudioObjectInterface.hpp"
+#include "Error.hpp"
 #include "Utils.hpp"
 
 namespace ProxyAudio {
@@ -65,7 +66,10 @@ class AudioObjectRegistry {
     // its lifetime.
 
     if (id - kAudioObjectPlugInObject >= objects_.size()) {
-      return nullptr;
+      throw ErrorWithCode(
+          kAudioHardwareBadObjectError,
+          "Object not found [id: " + std::to_string(id) +
+              ", numObjects: " + std::to_string(objects_.size()) + "]");
     }
 
     return objects_[id - kAudioObjectPlugInObject];

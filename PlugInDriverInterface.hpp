@@ -218,16 +218,12 @@ class PlugInDriverInterface {
 
     try {
       if (inAddress == nullptr) {
-        return false;
+        throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                            "HasProperty: no address");
       }
 
       auto& registry = GetDriver(inDriver).GetRegistry();
-      auto objectPtr = registry[inObjectID];
-      if (objectPtr == nullptr) {
-        return false;
-      }
-
-      return objectPtr->HasProperty(inClientProcessID, inAddress);
+      return registry[inObjectID]->HasProperty(inClientProcessID, inAddress);
     } catch (const ErrorWithCode& e) {
       e.log();
       return false;
@@ -254,14 +250,8 @@ class PlugInDriverInterface {
       }
 
       auto& registry = GetDriver(inDriver).GetRegistry();
-      auto objectPtr = registry[inObjectID];
-      if (objectPtr == nullptr) {
-        throw ErrorWithCode(kAudioHardwareBadObjectError,
-                            "IsPropertySettable: invalid object ID");
-      }
-
-      return objectPtr->IsPropertySettable(inClientProcessID, inAddress,
-                                           outIsSettable);
+      return registry[inObjectID]->IsPropertySettable(inClientProcessID,
+                                                      inAddress, outIsSettable);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();
@@ -290,15 +280,9 @@ class PlugInDriverInterface {
       }
 
       auto& registry = GetDriver(inDriver).GetRegistry();
-      auto objectPtr = registry[inObjectID];
-      if (objectPtr == nullptr) {
-        throw ErrorWithCode(kAudioHardwareBadObjectError,
-                            "GetPropertyDataSize: invalid object ID");
-      }
-
-      return objectPtr->GetPropertyDataSize(inClientProcessID, inAddress,
-                                            inQualifierDataSize,
-                                            inQualifierData, outDataSize);
+      return registry[inObjectID]->GetPropertyDataSize(
+          inClientProcessID, inAddress, inQualifierDataSize, inQualifierData,
+          outDataSize);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();
@@ -334,15 +318,9 @@ class PlugInDriverInterface {
       }
 
       auto& registry = GetDriver(inDriver).GetRegistry();
-      auto objectPtr = registry[inObjectID];
-      if (objectPtr == nullptr) {
-        throw ErrorWithCode(kAudioHardwareBadObjectError,
-                            "GetPropertyData: invalid object ID");
-      }
-
-      return objectPtr->GetPropertyData(inClientProcessID, inAddress,
-                                        inQualifierDataSize, inQualifierData,
-                                        inDataSize, outDataSize, outData);
+      return registry[inObjectID]->GetPropertyData(
+          inClientProcessID, inAddress, inQualifierDataSize, inQualifierData,
+          inDataSize, outDataSize, outData);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();
@@ -367,15 +345,9 @@ class PlugInDriverInterface {
       }
 
       auto& registry = GetDriver(inDriver).GetRegistry();
-      auto objectPtr = registry[inObjectID];
-      if (objectPtr == nullptr) {
-        throw ErrorWithCode(kAudioHardwareBadObjectError,
-                            "SetPropertyData: invalid object ID");
-      }
-
-      return objectPtr->SetPropertyData(inClientProcessID, inAddress,
-                                        inQualifierDataSize, inQualifierData,
-                                        inDataSize, inData);
+      return registry[inObjectID]->SetPropertyData(
+          inClientProcessID, inAddress, inQualifierDataSize, inQualifierData,
+          inDataSize, inData);
     } catch (const ErrorWithCode& e) {
       e.log();
       return e.code();
