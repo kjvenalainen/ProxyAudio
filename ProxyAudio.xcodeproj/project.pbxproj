@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		50318F3B2E8B4DC300966CF5 /* ProxyDriverInterface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 50318F3A2E8B4DC300966CF5 /* ProxyDriverInterface.cpp */; };
 		503560D62E7A650A00F4DBB6 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 503560D52E7A650A00F4DBB6 /* CoreFoundation.framework */; };
-		503560D82E7A678400F4DBB7 /* ProxyAudio.c in Sources */ = {isa = PBXBuildFile; fileRef = 503560D82E7A678400F4DBB6 /* ProxyAudio.c */; };
 		503560F92E7A7CBC00F4DBB6 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 503560F42E7A7CBC00F4DBB6 /* README.md */; };
 /* End PBXBuildFile section */
 
@@ -26,7 +25,6 @@
 		503436E82EE87EA8005072BA /* Constants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Constants.hpp; sourceTree = "<group>"; };
 		503560D52E7A650A00F4DBB6 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 		503560D72E7A669B00F4DBB6 /* LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
-		503560D82E7A678400F4DBB6 /* ProxyAudio.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ProxyAudio.c; sourceTree = "<group>"; };
 		503560D92E7A678400F4DBB6 /* ProxyAudio-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ProxyAudio-Info.plist"; sourceTree = "<group>"; };
 		503560F42E7A7CBC00F4DBB6 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		503561042E7A7D2E00F4DBB6 /* Property.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Property.hpp; sourceTree = "<group>"; };
@@ -84,7 +82,6 @@
 				503561042E7A7D2E00F4DBB6 /* Property.hpp */,
 				503561052E7A7D2E00F4DBB6 /* PropertyAddress.hpp */,
 				503560F42E7A7CBC00F4DBB6 /* README.md */,
-				503560D82E7A678400F4DBB6 /* ProxyAudio.c */,
 				503560D92E7A678400F4DBB6 /* ProxyAudio-Info.plist */,
 				503560D72E7A669B00F4DBB6 /* LICENSE.txt */,
 				503560D42E7A650A00F4DBB6 /* Frameworks */,
@@ -195,7 +192,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				50318F3B2E8B4DC300966CF5 /* ProxyDriverInterface.cpp in Sources */,
-				503560D82E7A678400F4DBB7 /* ProxyAudio.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

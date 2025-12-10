@@ -15,6 +15,7 @@
 #include "Constants.hpp"
 #include "Device.hpp"
 #include "Error.hpp"
+#include "Utils.hpp"
 
 namespace ProxyAudio {
 
@@ -41,10 +42,12 @@ class Box : public AudioObjectInterface, public AudioObjectRegistryRef {
         boxUID_(boxUID),
         transportType_(transportType),
         devices_() {
+    Log("constructor [id: %d, ownerId: %d]", id, ownerId);
+
     // Temporary: Add a single device to the box. Eventually we will create
-    // these dynamically.
-    devices_.push_back(
-        registry.Construct<Device>("ProxyAudio Device", "ProxyAudioDeviceUID"));
+    // these dynamically. Devices have the same owner as the box.
+    devices_.push_back(registry.Construct<Device>(ownerId_, "ProxyAudio Device",
+                                                  "ProxyAudioDeviceUID"));
   }
 
   Box(const Box& other) noexcept = delete;
@@ -389,7 +392,7 @@ class Box : public AudioObjectInterface, public AudioObjectRegistryRef {
               std::min(inDataSize / sizeof(AudioObjectID), devices_.size());
 
           for (size_t i = 0; i < numDevicesToFetch; i++) {
-            static_cast<AudioObjectID*>(outData)[0] = devices_[i]->Id();
+            static_cast<AudioObjectID*>(outData)[i] = devices_[i]->Id();
           }
 
           *outDataSize =
@@ -414,7 +417,35 @@ class Box : public AudioObjectInterface, public AudioObjectRegistryRef {
                            const void* inQualifierData,
                            UInt32 inDataSize,
                            const void* inData) override {
-    return kAudioHardwareBadPropertySizeError;
+    switch (inAddress->mSelector) {
+      case kAudioObjectPropertyName:
+        // Allow setting the box name
+        EXPECT(inDataSize == sizeof(CFStringRef),
+               BadDataSizeError("Box kAudioObjectPropertyName"));
+        name_ = CFStringToString(*((CFStringRef*)inData));
+        break;
+
+      case kAudioObjectPropertyIdentify:
+        // This property is used to trigger identification of the device in the
+        // UI We accept the value but don't need to do anything with it
+        EXPECT(inDataSize == sizeof(UInt32),
+               BadDataSizeError("Box kAudioObjectPropertyIdentify"));
+        break;
+
+      case kAudioBoxPropertyAcquired:
+        // Setting acquired state
+        EXPECT(inDataSize == sizeof(UInt32),
+               BadDataSizeError("Box kAudioBoxPropertyAcquired"));
+        acquired_ = (*((UInt32*)inData) != 0);
+        break;
+
+      default:
+        throw ErrorWithCode(kAudioHardwareUnknownPropertyError,
+                            "SetPropertyData: unknown property [" +
+                                std::to_string(inAddress->mSelector) + "]");
+    };
+
+    return S_OK;
   }
 
   // Readonly access to the devices.
@@ -431,7 +462,7 @@ class Box : public AudioObjectInterface, public AudioObjectRegistryRef {
   std::string firmwareVersion_;
   std::string boxUID_;
   TransportType transportType_;
-  std::atomic<bool> acquired_ = false;
+  std::atomic<bool> acquired_ = true;
   std::vector<std::shared_ptr<Device>> devices_;
 };
 

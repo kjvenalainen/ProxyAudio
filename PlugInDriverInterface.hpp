@@ -17,7 +17,7 @@
 namespace ProxyAudio {
 
 // Whether to log the calls to the static functions.
-constexpr static bool ENABLE_STATIC_LOGGING = true;
+constexpr static bool ENABLE_STATIC_LOGGING = false;
 #define LogStatic(inFormat, ...)         \
   if constexpr (ENABLE_STATIC_LOGGING) { \
     Log(inFormat, ##__VA_ARGS__);        \
@@ -30,7 +30,10 @@ class PlugInDriverInterface {
   // Hosts the registry of audio objects for this plug-in driver, including the
   // single instance of the driver itself.
   struct PlugInDriverSingleton {
-    PlugInDriverSingleton() : registry() { driver = registry.Construct<T>(); }
+    PlugInDriverSingleton() : registry() {
+      Log("constructor");
+      driver = registry.Construct<T>();
+    }
 
     AudioObjectRegistry registry;
     std::shared_ptr<T> driver;

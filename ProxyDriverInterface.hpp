@@ -50,15 +50,14 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
  public:
   ProxyDriverInterface(AudioObjectID id, AudioObjectRegistry& registry)
       : AudioObjectInterface(id, kAudioPlugInClassID),
-        AudioObjectRegistryRef(registry),
-        box_(registry.Construct<Box>(this->Id(),
-                                     "ProxyAudio Box",
-                                     "ProxyAudioBoxModel",
-                                     "ProxyAudio",
-                                     "ProxyAudioSerialNumber",
-                                     "ProxyAudioFirmwareVersion",
-                                     "ProxyAudioBoxUID",
-                                     TransportType::Virtual)) {}
+        AudioObjectRegistryRef(registry) {
+    Log("constructor [id: %d]", id);
+
+    box_ = registry.Construct<Box>(
+        this->Id(), "ProxyAudio Box", "ProxyAudioBoxModel", "ProxyAudio",
+        "ProxyAudioSerialNumber", "ProxyAudioFirmwareVersion",
+        "ProxyAudioBoxUID", TransportType::Virtual);
+  }
 
   virtual ~ProxyDriverInterface() override = default;
 

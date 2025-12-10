@@ -10,10 +10,20 @@
 #include <mach/mach_time.h>
 
 #include <atomic>
+#include <memory>
+#include <mutex>
+#include <string>
 
 #include "AudioObjectInterface.hpp"
 #include "AudioObjectRegistry.hpp"
+#include "CFStringUtils.hpp"
+#include "Constants.hpp"
+#include "DataDestination.hpp"
+#include "DataSource.hpp"
 #include "Error.hpp"
+#include "Mute.hpp"
+#include "Stream.hpp"
+#include "Volume.hpp"
 
 namespace ProxyAudio {
 
@@ -21,12 +31,45 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
  public:
   Device(AudioObjectID id,
          AudioObjectRegistry& registry,
+         AudioObjectID ownerId,
          const std::string& name,
          const std::string& modelUID)
       : AudioObjectInterface(id, kAudioDeviceClassID),
         AudioObjectRegistryRef(registry),
+        ownerId_(ownerId),
         name_(name),
-        modelUID_(modelUID) {}
+        modelUID_(modelUID),
+        sampleRate_(DEFAULT_SAMPLE_RATE),
+        hostTicksPerFrame_(ComputeHostTicksPerFrame(DEFAULT_SAMPLE_RATE)) {
+    Log("Device constructor [id: %d, ownerId: %d]", id, ownerId);
+
+    // Create input stream and its controls
+    inputStream_ = registry.Construct<Stream>(id, Direction::Input,
+                                              TerminalType::Microphone);
+
+    inputVolume_ = registry.Construct<Volume>(
+        id, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain);
+    inputMute_ = registry.Construct<Mute>(id, kAudioObjectPropertyScopeInput,
+                                          kAudioObjectPropertyElementMain);
+    inputDataSource_ = registry.Construct<DataSource>(
+        id, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain);
+
+    // Create output stream and its controls
+    outputStream_ = registry.Construct<Stream>(id, Direction::Output,
+                                               TerminalType::Speaker);
+
+    outputVolume_ = registry.Construct<Volume>(
+        id, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain);
+    outputMute_ = registry.Construct<Mute>(id, kAudioObjectPropertyScopeOutput,
+                                           kAudioObjectPropertyElementMain);
+    outputDataSource_ = registry.Construct<DataSource>(
+        id, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain);
+
+    // Create playthrough data destination
+    playthroughDestination_ = registry.Construct<DataDestination>(
+        id, kAudioObjectPropertyScopePlayThrough,
+        kAudioObjectPropertyElementMain);
+  }
 
   Device(const Device& other) noexcept = delete;
   Device(Device&& other) noexcept = delete;
@@ -35,13 +78,83 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
 
   Boolean HasProperty(pid_t inClientProcessID,
                       const AudioObjectPropertyAddress* inAddress) override {
-    return false;
+    switch (inAddress->mSelector) {
+      case kAudioObjectPropertyBaseClass:
+      case kAudioObjectPropertyClass:
+      case kAudioObjectPropertyOwner:
+      case kAudioObjectPropertyName:
+      case kAudioObjectPropertyManufacturer:
+      case kAudioObjectPropertyOwnedObjects:
+      case kAudioDevicePropertyDeviceUID:
+      case kAudioDevicePropertyModelUID:
+      case kAudioDevicePropertyTransportType:
+      case kAudioDevicePropertyRelatedDevices:
+      case kAudioDevicePropertyClockDomain:
+      case kAudioDevicePropertyDeviceIsAlive:
+      case kAudioDevicePropertyDeviceIsRunning:
+      case kAudioDevicePropertyNominalSampleRate:
+      case kAudioDevicePropertyAvailableNominalSampleRates:
+      case kAudioDevicePropertyIsHidden:
+      case kAudioDevicePropertyZeroTimeStampPeriod:
+      case kAudioDevicePropertyIcon:
+      case kAudioDevicePropertyStreams:
+      case kAudioObjectPropertyControlList:
+        return true;
+      case kAudioDevicePropertyDeviceCanBeDefaultDevice:
+      case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice:
+      case kAudioDevicePropertyLatency:
+      case kAudioDevicePropertySafetyOffset:
+      case kAudioDevicePropertyPreferredChannelsForStereo:
+      case kAudioDevicePropertyPreferredChannelLayout:
+        return (inAddress->mScope == kAudioObjectPropertyScopeInput) ||
+               (inAddress->mScope == kAudioObjectPropertyScopeOutput);
+      default:
+        return false;
+    }
   }
 
   OSStatus IsPropertySettable(pid_t inClientProcessID,
                               const AudioObjectPropertyAddress* inAddress,
                               Boolean* outIsSettable) override {
-    return kAudioHardwareBadPropertySizeError;
+    switch (inAddress->mSelector) {
+      case kAudioObjectPropertyBaseClass:
+      case kAudioObjectPropertyClass:
+      case kAudioObjectPropertyOwner:
+      case kAudioObjectPropertyName:
+      case kAudioObjectPropertyManufacturer:
+      case kAudioDevicePropertyDeviceUID:
+      case kAudioDevicePropertyModelUID:
+      case kAudioDevicePropertyTransportType:
+      case kAudioDevicePropertyRelatedDevices:
+      case kAudioDevicePropertyClockDomain:
+      case kAudioDevicePropertyDeviceIsAlive:
+      case kAudioDevicePropertyDeviceIsRunning:
+      case kAudioDevicePropertyDeviceCanBeDefaultDevice:
+      case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice:
+      case kAudioDevicePropertyStreams:
+      case kAudioObjectPropertyControlList:
+      case kAudioDevicePropertyLatency:
+      case kAudioDevicePropertySafetyOffset:
+      case kAudioDevicePropertyAvailableNominalSampleRates:
+      case kAudioDevicePropertyIsHidden:
+      case kAudioDevicePropertyPreferredChannelsForStereo:
+      case kAudioDevicePropertyPreferredChannelLayout:
+      case kAudioDevicePropertyZeroTimeStampPeriod:
+      case kAudioDevicePropertyIcon:
+        *outIsSettable = false;
+        break;
+
+      case kAudioDevicePropertyNominalSampleRate:
+        *outIsSettable = true;
+        break;
+
+      default:
+        throw ErrorWithCode(kAudioHardwareUnknownPropertyError,
+                            "IsPropertySettable: unknown property [" +
+                                std::to_string(inAddress->mSelector) + "]");
+    }
+
+    return S_OK;
   }
 
   OSStatus GetPropertyDataSize(pid_t inClientProcessID,
@@ -49,7 +162,118 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
                                UInt32 inQualifierDataSize,
                                const void* inQualifierData,
                                UInt32* outDataSize) override {
-    return kAudioHardwareBadPropertySizeError;
+    switch (inAddress->mSelector) {
+      case kAudioObjectPropertyBaseClass:
+        *outDataSize = sizeof(AudioClassID);
+        break;
+
+      case kAudioObjectPropertyClass:
+        *outDataSize = sizeof(AudioClassID);
+        break;
+
+      case kAudioObjectPropertyOwner:
+        *outDataSize = sizeof(AudioObjectID);
+        break;
+
+      case kAudioObjectPropertyName:
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioObjectPropertyManufacturer:
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioObjectPropertyOwnedObjects:
+        *outDataSize = GetOwnedObjectsSize(inAddress->mScope);
+        break;
+
+      case kAudioDevicePropertyDeviceUID:
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioDevicePropertyModelUID:
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioDevicePropertyTransportType:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyRelatedDevices:
+        *outDataSize = sizeof(AudioObjectID);
+        break;
+
+      case kAudioDevicePropertyClockDomain:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyDeviceIsAlive:
+        *outDataSize = sizeof(AudioClassID);
+        break;
+
+      case kAudioDevicePropertyDeviceIsRunning:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyDeviceCanBeDefaultDevice:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyNominalSampleRate:
+        *outDataSize = sizeof(Float64);
+        break;
+
+      case kAudioDevicePropertyAvailableNominalSampleRates:
+        *outDataSize = 2 * sizeof(AudioValueRange);
+        break;
+
+      case kAudioDevicePropertyIsHidden:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyZeroTimeStampPeriod:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyIcon:
+        *outDataSize = sizeof(CFURLRef);
+        break;
+
+      case kAudioDevicePropertyStreams:
+        *outDataSize = GetStreamsSize(inAddress->mScope);
+        break;
+
+      case kAudioObjectPropertyControlList:
+        *outDataSize = GetControlListSize(inAddress->mScope);
+        break;
+
+      case kAudioDevicePropertyLatency:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertySafetyOffset:
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyPreferredChannelsForStereo:
+        *outDataSize = 2 * sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyPreferredChannelLayout:
+        *outDataSize = sizeof(AudioChannelLayout);
+        break;
+
+      default:
+        throw ErrorWithCode(kAudioHardwareUnknownPropertyError,
+                            "GetPropertyDataSize: unknown property [" +
+                                std::to_string(inAddress->mSelector) + "]");
+    }
+
+    return S_OK;
   }
 
   OSStatus GetPropertyData(pid_t inClientProcessID,
@@ -59,7 +283,217 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
                            UInt32 inDataSize,
                            UInt32* outDataSize,
                            void* outData) override {
-    return kAudioHardwareBadPropertySizeError;
+    switch (inAddress->mSelector) {
+      case kAudioObjectPropertyBaseClass:
+        EXPECT(inDataSize >= sizeof(AudioClassID),
+               BadDataSizeError("Device kAudioObjectPropertyBaseClass"));
+        *((AudioClassID*)outData) = kAudioObjectClassID;
+        *outDataSize = sizeof(AudioClassID);
+        break;
+
+      case kAudioObjectPropertyClass:
+        EXPECT(inDataSize >= sizeof(AudioClassID),
+               BadDataSizeError("Device kAudioObjectPropertyClass"));
+        *((AudioClassID*)outData) = kAudioDeviceClassID;
+        *outDataSize = sizeof(AudioClassID);
+        break;
+
+      case kAudioObjectPropertyOwner:
+        EXPECT(inDataSize >= sizeof(AudioObjectID),
+               BadDataSizeError("Device kAudioObjectPropertyOwner"));
+        *((AudioObjectID*)outData) = ownerId_;
+        *outDataSize = sizeof(AudioObjectID);
+        break;
+
+      case kAudioObjectPropertyName:
+        EXPECT(inDataSize >= sizeof(CFStringRef),
+               BadDataSizeError("Device kAudioObjectPropertyName"));
+        *((CFStringRef*)outData) = StringToCFString(name_);
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioObjectPropertyManufacturer:
+        EXPECT(inDataSize >= sizeof(CFStringRef),
+               BadDataSizeError("Device kAudioObjectPropertyManufacturer"));
+        *((CFStringRef*)outData) = StringToCFString("ProxyAudio");
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioObjectPropertyOwnedObjects:
+        GetOwnedObjects(inAddress->mScope, inDataSize, outDataSize, outData);
+        break;
+
+      case kAudioDevicePropertyDeviceUID:
+        EXPECT(inDataSize >= sizeof(CFStringRef),
+               BadDataSizeError("Device kAudioDevicePropertyDeviceUID"));
+        *((CFStringRef*)outData) = StringToCFString(modelUID_);
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioDevicePropertyModelUID:
+        EXPECT(inDataSize >= sizeof(CFStringRef),
+               BadDataSizeError("Device kAudioDevicePropertyModelUID"));
+        *((CFStringRef*)outData) = StringToCFString(modelUID_);
+        *outDataSize = sizeof(CFStringRef);
+        break;
+
+      case kAudioDevicePropertyTransportType:
+        EXPECT(inDataSize >= sizeof(UInt32),
+               BadDataSizeError("Device kAudioDevicePropertyTransportType"));
+        *((UInt32*)outData) = kAudioDeviceTransportTypeVirtual;
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyRelatedDevices:
+        EXPECT(inDataSize >= sizeof(AudioObjectID),
+               BadDataSizeError("Device kAudioDevicePropertyRelatedDevices"));
+        *((AudioObjectID*)outData) = 0;  // No related devices
+        *outDataSize = sizeof(AudioObjectID);
+        break;
+
+      case kAudioDevicePropertyClockDomain:
+        EXPECT(inDataSize >= sizeof(UInt32),
+               BadDataSizeError("Device kAudioDevicePropertyClockDomain"));
+        *((UInt32*)outData) = 0;  // No clock domain
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyDeviceIsAlive:
+        EXPECT(inDataSize >= sizeof(AudioClassID),
+               BadDataSizeError("Device kAudioDevicePropertyDeviceIsAlive"));
+        *((AudioClassID*)outData) = kAudioDeviceClassID;
+        *outDataSize = sizeof(AudioClassID);
+        break;
+
+      case kAudioDevicePropertyDeviceIsRunning:
+        EXPECT(inDataSize >= sizeof(UInt32),
+               BadDataSizeError("Device kAudioDevicePropertyDeviceIsRunning"));
+        {
+          std::lock_guard<std::mutex> lock(ioMutex_);
+          *((UInt32*)outData) = (ioClientCount_ > 0) ? 1 : 0;
+        }
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyDeviceCanBeDefaultDevice:
+        EXPECT(inDataSize >= sizeof(UInt32),
+               BadDataSizeError(
+                   "Device kAudioDevicePropertyDeviceCanBeDefaultDevice"));
+        *((UInt32*)outData) = 1;
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice:
+        EXPECT(
+            inDataSize >= sizeof(UInt32),
+            BadDataSizeError(
+                "Device kAudioDevicePropertyDeviceCanBeDefaultSystemDevice"));
+        *((UInt32*)outData) = 1;
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyNominalSampleRate:
+        EXPECT(
+            inDataSize >= sizeof(Float64),
+            BadDataSizeError("Device kAudioDevicePropertyNominalSampleRate"));
+        {
+          std::lock_guard<std::mutex> lock(ioMutex_);
+          *((Float64*)outData) = sampleRate_;
+        }
+        *outDataSize = sizeof(Float64);
+        break;
+
+      case kAudioDevicePropertyAvailableNominalSampleRates:
+        EXPECT(inDataSize >= 2 * sizeof(AudioValueRange),
+               BadDataSizeError(
+                   "Device kAudioDevicePropertyAvailableNominalSampleRates"));
+        {
+          AudioValueRange* ranges = static_cast<AudioValueRange*>(outData);
+          ranges[0].mMinimum = 44100.0;
+          ranges[0].mMaximum = 44100.0;
+          ranges[1].mMinimum = 48000.0;
+          ranges[1].mMaximum = 48000.0;
+        }
+        *outDataSize = 2 * sizeof(AudioValueRange);
+        break;
+
+      case kAudioDevicePropertyIsHidden:
+        EXPECT(inDataSize >= sizeof(UInt32),
+               BadDataSizeError("Device kAudioDevicePropertyIsHidden"));
+        *((UInt32*)outData) = 0;
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyZeroTimeStampPeriod:
+        EXPECT(
+            inDataSize >= sizeof(UInt32),
+            BadDataSizeError("Device kAudioDevicePropertyZeroTimeStampPeriod"));
+        *((UInt32*)outData) = static_cast<UInt32>(RING_BUFFER_SIZE);
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyIcon:
+        EXPECT(inDataSize >= sizeof(CFURLRef),
+               BadDataSizeError("Device kAudioDevicePropertyIcon"));
+        *((CFURLRef*)outData) = nullptr;  // No icon
+        *outDataSize = sizeof(CFURLRef);
+        break;
+
+      case kAudioDevicePropertyStreams:
+        GetStreams(inAddress->mScope, inDataSize, outDataSize, outData);
+        break;
+
+      case kAudioObjectPropertyControlList:
+        GetControlList(inAddress->mScope, inDataSize, outDataSize, outData);
+        break;
+
+      case kAudioDevicePropertyLatency:
+        EXPECT(inDataSize >= sizeof(UInt32),
+               BadDataSizeError("Device kAudioDevicePropertyLatency"));
+        *((UInt32*)outData) = 0;  // No latency
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertySafetyOffset:
+        EXPECT(inDataSize >= sizeof(UInt32),
+               BadDataSizeError("Device kAudioDevicePropertySafetyOffset"));
+        *((UInt32*)outData) = 0;  // No safety offset
+        *outDataSize = sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyPreferredChannelsForStereo:
+        EXPECT(inDataSize >= 2 * sizeof(UInt32),
+               BadDataSizeError(
+                   "Device kAudioDevicePropertyPreferredChannelsForStereo"));
+        {
+          UInt32* channels = static_cast<UInt32*>(outData);
+          channels[0] = 1;
+          channels[1] = 2;
+        }
+        *outDataSize = 2 * sizeof(UInt32);
+        break;
+
+      case kAudioDevicePropertyPreferredChannelLayout:
+        EXPECT(inDataSize >= sizeof(AudioChannelLayout),
+               BadDataSizeError(
+                   "Device kAudioDevicePropertyPreferredChannelLayout"));
+        {
+          AudioChannelLayout* layout =
+              static_cast<AudioChannelLayout*>(outData);
+          layout->mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
+          layout->mChannelBitmap = 0;
+          layout->mNumberChannelDescriptions = 0;
+        }
+        *outDataSize = sizeof(AudioChannelLayout);
+        break;
+
+      default:
+        throw ErrorWithCode(kAudioHardwareUnknownPropertyError,
+                            "GetPropertyData: unknown property [" +
+                                std::to_string(inAddress->mSelector) + "]");
+    }
+
+    return S_OK;
   }
 
   OSStatus SetPropertyData(pid_t inClientProcessID,
@@ -68,7 +502,31 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
                            const void* inQualifierData,
                            UInt32 inDataSize,
                            const void* inData) override {
-    return kAudioHardwareBadPropertySizeError;
+    switch (inAddress->mSelector) {
+      case kAudioDevicePropertyNominalSampleRate:
+        EXPECT(inDataSize == sizeof(Float64),
+               BadDataSizeError("Device SetPropertyData "
+                                "kAudioDevicePropertyNominalSampleRate"));
+        {
+          Float64 newRate = *((const Float64*)inData);
+          if (newRate == 44100.0 || newRate == 48000.0) {
+            std::lock_guard<std::mutex> lock(ioMutex_);
+            sampleRate_ = newRate;
+            hostTicksPerFrame_ = ComputeHostTicksPerFrame(sampleRate_);
+          } else {
+            throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                                "Unsupported sample rate");
+          }
+        }
+        break;
+
+      default:
+        throw ErrorWithCode(kAudioHardwareUnknownPropertyError,
+                            "SetPropertyData: unknown property [" +
+                                std::to_string(inAddress->mSelector) + "]");
+    }
+
+    return S_OK;
   }
 
   OSStatus AddClient(const AudioServerPlugInClientInfo* inClientInfo) {
@@ -157,6 +615,23 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
     return S_OK;
   }
 
+  static double ComputeHostTicksPerFrame(const double sampleRate) {
+    // Calculate the host ticks per frame
+    struct mach_timebase_info timebaseInfo;
+    if (KERN_SUCCESS != mach_timebase_info(&timebaseInfo)) {
+      throw ErrorWithCode(kAudioHardwareIllegalOperationError,
+                          "Failed to get mach_timebase_info");
+    }
+
+    const auto theHostClockFrequency = static_cast<double>(timebaseInfo.denom) /
+                                       static_cast<double>(timebaseInfo.numer) *
+                                       1000000000.0;
+    return theHostClockFrequency / sampleRate;
+  }
+
+  static constexpr double DEFAULT_SAMPLE_RATE = 48000.0;
+  static constexpr size_t RING_BUFFER_SIZE = 16384U;
+
   OSStatus WillDoIOOperation(UInt32 inClientID,
                              UInt32 inOperationID,
                              Boolean* outWillDo,
@@ -169,6 +644,7 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioServerPlugInIOOperationWriteMix:
         *outWillDo = true;
         *outWillDoInPlace = true;
+        break;
     }
 
     return S_OK;
@@ -205,23 +681,144 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
   }
 
  private:
-  static double ComputeHostTicksPerFrame(const double sampleRate) {
-    // Calculate the host ticks per frame
-    struct mach_timebase_info timebaseInfo;
-    if (KERN_SUCCESS != mach_timebase_info(&timebaseInfo)) {
-      throw ErrorWithCode(kAudioHardwareIllegalOperationError,
-                          "Failed to get mach_timebase_info");
+  UInt32 GetOwnedObjectsSize(AudioObjectPropertyScope scope) const {
+    switch (scope) {
+      case kAudioObjectPropertyScopeGlobal:
+        return 2 * sizeof(AudioObjectID);  // input and output streams
+      case kAudioObjectPropertyScopeInput:
+        return sizeof(AudioObjectID);  // input stream
+      case kAudioObjectPropertyScopeOutput:
+        return sizeof(AudioObjectID);  // output stream
+      default:
+        return 0;
     }
-
-    const auto theHostClockFrequency = static_cast<double>(timebaseInfo.denom) /
-                                       static_cast<double>(timebaseInfo.numer) *
-                                       1000000000.0;
-    return theHostClockFrequency / sampleRate;
   }
 
-  static constexpr double DEFAULT_SAMPLE_RATE = 48000.0;
-  static constexpr size_t RING_BUFFER_SIZE = 16384U;
+  void GetOwnedObjects(AudioObjectPropertyScope scope,
+                       UInt32 inDataSize,
+                       UInt32* outDataSize,
+                       void* outData) const {
+    AudioObjectID* objects = static_cast<AudioObjectID*>(outData);
+    UInt32 count = 0;
 
+    switch (scope) {
+      case kAudioObjectPropertyScopeGlobal:
+        if (inDataSize >= 2 * sizeof(AudioObjectID)) {
+          objects[0] = inputStream_->Id();
+          objects[1] = outputStream_->Id();
+          count = 2;
+        }
+        break;
+      case kAudioObjectPropertyScopeInput:
+        if (inDataSize >= sizeof(AudioObjectID)) {
+          objects[0] = inputStream_->Id();
+          count = 1;
+        }
+        break;
+      case kAudioObjectPropertyScopeOutput:
+        if (inDataSize >= sizeof(AudioObjectID)) {
+          objects[0] = outputStream_->Id();
+          count = 1;
+        }
+        break;
+    }
+
+    *outDataSize = count * sizeof(AudioObjectID);
+  }
+
+  UInt32 GetStreamsSize(AudioObjectPropertyScope scope) const {
+    switch (scope) {
+      case kAudioObjectPropertyScopeGlobal:
+        return 2 * sizeof(AudioObjectID);
+      case kAudioObjectPropertyScopeInput:
+      case kAudioObjectPropertyScopeOutput:
+        return sizeof(AudioObjectID);
+      default:
+        return 0;
+    }
+  }
+
+  void GetStreams(AudioObjectPropertyScope scope,
+                  UInt32 inDataSize,
+                  UInt32* outDataSize,
+                  void* outData) const {
+    AudioObjectID* streams = static_cast<AudioObjectID*>(outData);
+    UInt32 count = 0;
+
+    switch (scope) {
+      case kAudioObjectPropertyScopeGlobal:
+        if (inDataSize >= 2 * sizeof(AudioObjectID)) {
+          streams[0] = inputStream_->Id();
+          streams[1] = outputStream_->Id();
+          count = 2;
+        }
+        break;
+      case kAudioObjectPropertyScopeInput:
+        if (inDataSize >= sizeof(AudioObjectID)) {
+          streams[0] = inputStream_->Id();
+          count = 1;
+        }
+        break;
+      case kAudioObjectPropertyScopeOutput:
+        if (inDataSize >= sizeof(AudioObjectID)) {
+          streams[0] = outputStream_->Id();
+          count = 1;
+        }
+        break;
+    }
+
+    *outDataSize = count * sizeof(AudioObjectID);
+  }
+
+  UInt32 GetControlListSize(AudioObjectPropertyScope scope) const {
+    switch (scope) {
+      case kAudioObjectPropertyScopeGlobal:
+        return sizeof(AudioObjectID);  // playthrough destination
+      case kAudioObjectPropertyScopeInput:
+        return 3 * sizeof(AudioObjectID);  // volume, mute, datasource
+      case kAudioObjectPropertyScopeOutput:
+        return 3 * sizeof(AudioObjectID);  // volume, mute, datasource
+      default:
+        return 0;
+    }
+  }
+
+  void GetControlList(AudioObjectPropertyScope scope,
+                      UInt32 inDataSize,
+                      UInt32* outDataSize,
+                      void* outData) const {
+    AudioObjectID* controls = static_cast<AudioObjectID*>(outData);
+    UInt32 count = 0;
+
+    switch (scope) {
+      case kAudioObjectPropertyScopeGlobal:
+        if (inDataSize >= sizeof(AudioObjectID)) {
+          controls[0] = playthroughDestination_->Id();
+          count = 1;
+        }
+        break;
+      case kAudioObjectPropertyScopeInput:
+        if (inDataSize >= 3 * sizeof(AudioObjectID)) {
+          controls[0] = inputVolume_->Id();
+          controls[1] = inputMute_->Id();
+          controls[2] = inputDataSource_->Id();
+          count = 3;
+        }
+        break;
+      case kAudioObjectPropertyScopeOutput:
+        if (inDataSize >= 3 * sizeof(AudioObjectID)) {
+          controls[0] = outputVolume_->Id();
+          controls[1] = outputMute_->Id();
+          controls[2] = outputDataSource_->Id();
+          count = 3;
+        }
+        break;
+    }
+
+    *outDataSize = count * sizeof(AudioObjectID);
+  }
+
+  const AudioObjectID ownerId_;
   std::string name_;
   std::string modelUID_;
   std::mutex ioMutex_;
@@ -229,7 +826,21 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
   uint64_t numberTimeStamps_ = 0;
   uint64_t anchorSampleTime_ = 0;
   uint64_t anchorHostTime_ = 0;
-  double hostTicksPerFrame_ = ComputeHostTicksPerFrame(DEFAULT_SAMPLE_RATE);
+  double sampleRate_;
+  double hostTicksPerFrame_;
+
+  // Streams
+  std::shared_ptr<Stream> inputStream_;
+  std::shared_ptr<Stream> outputStream_;
+
+  // Controls
+  std::shared_ptr<Volume> inputVolume_;
+  std::shared_ptr<Mute> inputMute_;
+  std::shared_ptr<DataSource> inputDataSource_;
+  std::shared_ptr<Volume> outputVolume_;
+  std::shared_ptr<Mute> outputMute_;
+  std::shared_ptr<DataSource> outputDataSource_;
+  std::shared_ptr<DataDestination> playthroughDestination_;
 };
 
 }  // namespace ProxyAudio
