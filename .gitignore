@@ -17,3 +17,7 @@
 !**/*.playground/playground.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
 
 **/build/
+
+compile_commands.json
+cdb/
+.cache/

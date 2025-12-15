@@ -8,6 +8,8 @@
 
 #include <os/log.h>
 
+#include <span>
+
 namespace ProxyAudio {
 
 // Gets the filename from a file path.
@@ -24,6 +26,13 @@ constexpr static inline const char* GetFilename(const char* filePath) {
   }
 
   return filePath + lastSlash + 1;
+}
+
+// Converts a pointer and size into a span, clamping the size to the size of the
+// array.
+template <typename T>
+constexpr static std::span<T> SafeSpan(T* out, size_t outSize) {
+  return std::span<T>(out, outSize / sizeof(T));
 }
 
 #define Log(inFormat, ...)                                 \

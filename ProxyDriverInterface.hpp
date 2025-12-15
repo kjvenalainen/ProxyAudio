@@ -15,6 +15,7 @@
 #include <mach/kern_return.h>
 #include <mach/mach_time.h>
 
+#include <algorithm>
 #include <memory>
 #include <type_traits>
 
@@ -392,10 +393,10 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
 
       case kAudioObjectPropertyOwnedObjects: {
         const bool boxAcquired = box_->Acquired();
-        *outDataSize = boxAcquired
-                           ? sizeof(AudioObjectID) +
-                                 box_->Devices().size() * sizeof(AudioObjectID)
-                           : sizeof(AudioObjectID);
+        *outDataSize = static_cast<UInt32>(
+            boxAcquired ? sizeof(AudioObjectID) +
+                              box_->Devices().size() * sizeof(AudioObjectID)
+                        : sizeof(AudioObjectID));
         return S_OK;
       }
 
@@ -409,8 +410,8 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
 
       case kAudioPlugInPropertyDeviceList: {
         const bool boxAcquired = box_->Acquired();
-        *outDataSize =
-            boxAcquired ? box_->Devices().size() * sizeof(AudioObjectID) : 0;
+        *outDataSize = static_cast<UInt32>(
+            boxAcquired ? box_->Devices().size() * sizeof(AudioObjectID) : 0);
         return S_OK;
       }
 
@@ -506,24 +507,21 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
         const bool boxAcquired = box_->Acquired();
         const auto& devices = box_->Devices();
 
-        // The box is always owned, and if it's acquired then it may have
-        // devices.
-        const UInt32 maxItems = boxAcquired ? (1 + devices.size()) : 1;
-        UInt32 numberItemsToFetch = inDataSize / sizeof(AudioObjectID);
-        if (numberItemsToFetch > maxItems) {
-          numberItemsToFetch = maxItems;
+        const auto outSpan =
+            SafeSpan(static_cast<AudioObjectID*>(outData), inDataSize);
+        const size_t numItemsToFetch =
+            std::min(outSpan.size(), boxAcquired ? devices.size() + 1 : 1);
+
+        if (numItemsToFetch > 0) {
+          outSpan[0] = box_->Id();
         }
 
-        if (numberItemsToFetch > 0) {
-          static_cast<AudioObjectID*>(outData)[0] = box_->Id();
+        for (size_t i = 1; i < numItemsToFetch; i++) {
+          outSpan[i] = devices[i - 1]->Id();
         }
 
-        size_t i = 0;
-        for (; i < devices.size() && i < numberItemsToFetch - 1; i++) {
-          static_cast<AudioObjectID*>(outData)[i + 1] = devices[i]->Id();
-        }
-
-        *outDataSize = (i + 1) * sizeof(AudioObjectID);
+        *outDataSize =
+            static_cast<UInt32>(numItemsToFetch * sizeof(AudioObjectID));
         return S_OK;
       }
 
@@ -567,19 +565,17 @@ class ProxyDriverInterface : public PlugInDriverInterface<ProxyDriverInterface>,
         const bool boxAcquired = box_->Acquired();
         const auto& devices = box_->Devices();
 
-        if (!boxAcquired) {
-          *outDataSize = 0;
-          return S_OK;
+        const auto outSpan =
+            SafeSpan(static_cast<AudioObjectID*>(outData), inDataSize);
+        const size_t numItemsToFetch =
+            std::min(outSpan.size(), boxAcquired ? devices.size() : 0);
+
+        for (size_t i = 0; i < numItemsToFetch; i++) {
+          outSpan[i] = devices[i]->Id();
         }
 
-        UInt32 numberItemsToFetch = inDataSize / sizeof(AudioObjectID);
-
-        size_t i = 0;
-        for (; i < devices.size() && i < numberItemsToFetch; i++) {
-          static_cast<AudioObjectID*>(outData)[i] = devices[i]->Id();
-        }
-
-        *outDataSize = i * sizeof(AudioObjectID);
+        *outDataSize =
+            static_cast<UInt32>(numItemsToFetch * sizeof(AudioObjectID));
         return S_OK;
       }
 

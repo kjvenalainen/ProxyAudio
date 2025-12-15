@@ -691,13 +691,22 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
 
  private:
   UInt32 GetOwnedObjectsSize(AudioObjectPropertyScope scope) const {
+    // Input objects: stream, volume, mute, datasource.
+    const size_t inputObjects = 4;
+    // Output objects: stream, volume, mute, datasource, balance.
+    const size_t outputObjects = 5;
+    // Playthrough objects: playthrough destination.
+    const size_t playthroughObjects = 1;
+
     switch (scope) {
       case kAudioObjectPropertyScopeGlobal:
-        return 2 * sizeof(AudioObjectID);  // input and output streams
+        // Streams and controls.
+        return (inputObjects + outputObjects + playthroughObjects) *
+               sizeof(AudioObjectID);
       case kAudioObjectPropertyScopeInput:
-        return sizeof(AudioObjectID);  // input stream
+        return inputObjects * sizeof(AudioObjectID);
       case kAudioObjectPropertyScopeOutput:
-        return sizeof(AudioObjectID);  // output stream
+        return outputObjects * sizeof(AudioObjectID);
       default:
         return 0;
     }
@@ -707,32 +716,52 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
                        UInt32 inDataSize,
                        UInt32* outDataSize,
                        void* outData) const {
-    AudioObjectID* objects = static_cast<AudioObjectID*>(outData);
-    UInt32 count = 0;
+    const auto outSpan =
+        SafeSpan(static_cast<AudioObjectID*>(outData), inDataSize);
+    const size_t numItemsToFetch = std::min(
+        outSpan.size(), static_cast<size_t>(GetOwnedObjectsSize(scope)));
 
-    switch (scope) {
-      case kAudioObjectPropertyScopeGlobal:
-        if (inDataSize >= 2 * sizeof(AudioObjectID)) {
-          objects[0] = inputStream_->Id();
-          objects[1] = outputStream_->Id();
-          count = 2;
-        }
-        break;
-      case kAudioObjectPropertyScopeInput:
-        if (inDataSize >= sizeof(AudioObjectID)) {
-          objects[0] = inputStream_->Id();
-          count = 1;
-        }
-        break;
-      case kAudioObjectPropertyScopeOutput:
-        if (inDataSize >= sizeof(AudioObjectID)) {
-          objects[0] = outputStream_->Id();
-          count = 1;
-        }
-        break;
+    size_t i = 0;
+    if (scope == kAudioObjectPropertyScopeGlobal ||
+        scope == kAudioObjectPropertyScopeInput) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputStream_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputVolume_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputMute_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputDataSource_->Id();
+      }
+    }
+    if (scope == kAudioObjectPropertyScopeGlobal ||
+        scope == kAudioObjectPropertyScopeOutput) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputStream_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputVolume_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputMute_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputDataSource_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputBalance_->Id();
+      }
+    }
+    if (scope == kAudioObjectPropertyScopeGlobal) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = playthroughDestination_->Id();
+      }
     }
 
-    *outDataSize = count * sizeof(AudioObjectID);
+    *outDataSize = static_cast<UInt32>(i * sizeof(AudioObjectID));
   }
 
   UInt32 GetStreamsSize(AudioObjectPropertyScope scope) const {
@@ -751,76 +780,90 @@ class Device : public AudioObjectInterface, public AudioObjectRegistryRef {
                   UInt32 inDataSize,
                   UInt32* outDataSize,
                   void* outData) const {
-    AudioObjectID* streams = static_cast<AudioObjectID*>(outData);
-    UInt32 count = 0;
+    const auto outSpan =
+        SafeSpan(static_cast<AudioObjectID*>(outData), inDataSize);
+    const size_t numItemsToFetch =
+        std::min(outSpan.size(), static_cast<size_t>(GetStreamsSize(scope)));
 
-    switch (scope) {
-      case kAudioObjectPropertyScopeGlobal:
-        if (inDataSize >= 2 * sizeof(AudioObjectID)) {
-          streams[0] = inputStream_->Id();
-          streams[1] = outputStream_->Id();
-          count = 2;
-        }
-        break;
-      case kAudioObjectPropertyScopeInput:
-        if (inDataSize >= sizeof(AudioObjectID)) {
-          streams[0] = inputStream_->Id();
-          count = 1;
-        }
-        break;
-      case kAudioObjectPropertyScopeOutput:
-        if (inDataSize >= sizeof(AudioObjectID)) {
-          streams[0] = outputStream_->Id();
-          count = 1;
-        }
-        break;
+    size_t i = 0;
+    if (scope == kAudioObjectPropertyScopeGlobal ||
+        scope == kAudioObjectPropertyScopeInput) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputStream_->Id();
+      }
+    }
+    if (scope == kAudioObjectPropertyScopeGlobal ||
+        scope == kAudioObjectPropertyScopeOutput) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputStream_->Id();
+      }
     }
 
-    *outDataSize = count * sizeof(AudioObjectID);
+    *outDataSize = static_cast<UInt32>(i * sizeof(AudioObjectID));
   }
 
   UInt32 GetControlListSize(AudioObjectPropertyScope scope) const {
-    // Return all controls regardless of scope, as per AudioServerPlugIn spec
-    // input (volume, mute, datasource, balance) + output (volume, mute,
-    // datasource, balance) + playthrough
-    return 9 * sizeof(AudioObjectID);
+    const size_t inputControls = 3;
+    const size_t outputControls = 4;
+    const size_t playthroughControls = 1;
+
+    switch (scope) {
+      case kAudioObjectPropertyScopeGlobal:
+        return (inputControls + outputControls + playthroughControls) *
+               sizeof(AudioObjectID);
+      case kAudioObjectPropertyScopeInput:
+        return inputControls * sizeof(AudioObjectID);
+      case kAudioObjectPropertyScopeOutput:
+        return outputControls * sizeof(AudioObjectID);
+      default:
+        return 0;
+    }
   }
 
   void GetControlList(AudioObjectPropertyScope scope,
                       UInt32 inDataSize,
                       UInt32* outDataSize,
                       void* outData) const {
-    AudioObjectID* controls = static_cast<AudioObjectID*>(outData);
+    const auto outSpan =
+        SafeSpan(static_cast<AudioObjectID*>(outData), inDataSize);
+    const size_t numItemsToFetch = std::min(
+        outSpan.size(), static_cast<size_t>(GetControlListSize(scope)));
+    size_t i = 0;
 
-    // Calculate how many items can fit in the buffer
-    UInt32 maxCount = inDataSize / sizeof(AudioObjectID);
-    if (maxCount > 9) {
-      maxCount = 9;
+    if (scope == kAudioObjectPropertyScopeGlobal ||
+        scope == kAudioObjectPropertyScopeInput) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputVolume_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputMute_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = inputDataSource_->Id();
+      }
+    }
+    if (scope == kAudioObjectPropertyScopeGlobal ||
+        scope == kAudioObjectPropertyScopeOutput) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputVolume_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputMute_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputDataSource_->Id();
+      }
+      if (i < numItemsToFetch) {
+        outSpan[i++] = outputBalance_->Id();
+      }
+    }
+    if (scope == kAudioObjectPropertyScopeGlobal) {
+      if (i < numItemsToFetch) {
+        outSpan[i++] = playthroughDestination_->Id();
+      }
     }
 
-    // Return all controls regardless of scope, as per AudioServerPlugIn spec
-    // Order: input (volume, mute, datasource, balance), output (volume, mute,
-    // datasource, balance), playthrough
-    UInt32 index = 0;
-
-    if (index < maxCount)
-      controls[index++] = inputVolume_->Id();
-    if (index < maxCount)
-      controls[index++] = inputMute_->Id();
-    if (index < maxCount)
-      controls[index++] = inputDataSource_->Id();
-    if (index < maxCount)
-      controls[index++] = outputVolume_->Id();
-    if (index < maxCount)
-      controls[index++] = outputMute_->Id();
-    if (index < maxCount)
-      controls[index++] = outputDataSource_->Id();
-    if (index < maxCount)
-      controls[index++] = outputBalance_->Id();
-    if (index < maxCount)
-      controls[index++] = playthroughDestination_->Id();
-
-    *outDataSize = index * sizeof(AudioObjectID);
+    *outDataSize = static_cast<UInt32>(i * sizeof(AudioObjectID));
   }
 
   const AudioObjectID ownerId_;

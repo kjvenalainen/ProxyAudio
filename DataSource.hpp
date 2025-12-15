@@ -32,14 +32,9 @@ class DataSource : public AudioObjectInterface, public AudioObjectRegistryRef {
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
         scope_(DirectionToScope(direction)),
+        items_({"Default"}),
         currentItem_(0) {
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
-
-    // Initialize with 4 items
-    items_.resize(4);
-    for (size_t i = 0; i < items_.size(); ++i) {
-      items_[i] = "ProxyAudio Source " + std::to_string(i + 1);
-    }
   }
 
   DataSource(const DataSource& other) noexcept = delete;
@@ -155,14 +150,14 @@ class DataSource : public AudioObjectInterface, public AudioObjectRegistryRef {
       case kAudioObjectPropertyBaseClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
                BadDataSizeError("DataSource kAudioObjectPropertyBaseClass"));
-        *((AudioClassID*)outData) = kAudioControlClassID;
+        *((AudioClassID*)outData) = kAudioSelectorControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 
       case kAudioObjectPropertyClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
                BadDataSizeError("DataSource kAudioObjectPropertyClass"));
-        *((AudioClassID*)outData) = kAudioSelectorControlClassID;
+        *((AudioClassID*)outData) = kAudioDataSourceControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 

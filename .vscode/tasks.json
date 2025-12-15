@@ -4,8 +4,9 @@
     {
       "label": "Build ProxyAudio",
       "type": "shell",
-      "command": "xcodebuild",
+      "command": "script/gxcWrapper.sh",
       "args": [
+        "xcodebuild",
         "-project",
         "ProxyAudio.xcodeproj",
         "-target",
@@ -44,8 +45,9 @@
     {
       "label": "Build ProxyAudio (Release)",
       "type": "shell",
-      "command": "xcodebuild",
+      "command": "script/gxcWrapper.sh",
       "args": [
+        "xcodebuild",
         "-project",
         "ProxyAudio.xcodeproj",
         "-target",

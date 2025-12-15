@@ -29,12 +29,9 @@ class DataDestination : public AudioObjectInterface, public AudioObjectRegistryR
         AudioObjectRegistryRef(registry),
         ownerId_(ownerId),
         scope_(kAudioObjectPropertyScopePlayThrough),
+        items_({"PlayThrough"}),
         currentItem_(0) {
     Log("constructor [id: %d, ownerId: %d]", id, ownerId);
-
-    // Initialize with 1 item for playthrough
-    items_.resize(1);
-    items_[0] = "PlayThrough";
   }
 
   DataDestination(const DataDestination& other) noexcept = delete;
@@ -150,14 +147,14 @@ class DataDestination : public AudioObjectInterface, public AudioObjectRegistryR
       case kAudioObjectPropertyBaseClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
                BadDataSizeError("DataDestination kAudioObjectPropertyBaseClass"));
-        *((AudioClassID*)outData) = kAudioControlClassID;
+        *((AudioClassID*)outData) = kAudioSelectorControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 
       case kAudioObjectPropertyClass:
         EXPECT(inDataSize >= sizeof(AudioClassID),
                BadDataSizeError("DataDestination kAudioObjectPropertyClass"));
-        *((AudioClassID*)outData) = kAudioSelectorControlClassID;
+        *((AudioClassID*)outData) = kAudioDataDestinationControlClassID;
         *outDataSize = sizeof(AudioClassID);
         break;
 
