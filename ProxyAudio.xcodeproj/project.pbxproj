@@ -19,6 +19,11 @@
 		50005B882ED28070000A062C /* Volume.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Volume.hpp; sourceTree = "<group>"; };
 		50005B892ED280E6000A062C /* DataDestination.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DataDestination.hpp; sourceTree = "<group>"; };
 		50005B8A2ED2830C000A062C /* CFStringUtils.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CFStringUtils.hpp; sourceTree = "<group>"; };
+		50308D0E2EF701B900E3C457 /* Context.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Context.hpp; sourceTree = "<group>"; };
+		50308D0F2EF701B900E3C457 /* Object.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Object.hpp; sourceTree = "<group>"; };
+		50308D102EF701B900E3C457 /* PlugInInterface.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PlugInInterface.hpp; sourceTree = "<group>"; };
+		50308D112EF701B900E3C457 /* Registry.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Registry.hpp; sourceTree = "<group>"; };
+		50308D122EF720C800E3C457 /* Driver.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Driver.hpp; sourceTree = "<group>"; };
 		50318F382E8B48D700966CF5 /* PlugInDriverInterface.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PlugInDriverInterface.hpp; sourceTree = "<group>"; };
 		50318F392E8B49F100966CF5 /* ProxyDriverInterface.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ProxyDriverInterface.hpp; sourceTree = "<group>"; };
 		50318F3A2E8B4DC300966CF5 /* ProxyDriverInterface.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ProxyDriverInterface.cpp; sourceTree = "<group>"; };
@@ -63,6 +68,11 @@
 		5080707B2E7A640E00BFF9B2 = {
 			isa = PBXGroup;
 			children = (
+				50308D122EF720C800E3C457 /* Driver.hpp */,
+				50308D0E2EF701B900E3C457 /* Context.hpp */,
+				50308D0F2EF701B900E3C457 /* Object.hpp */,
+				50308D102EF701B900E3C457 /* PlugInInterface.hpp */,
+				50308D112EF701B900E3C457 /* Registry.hpp */,
 				50A14E012EE93D1E006555B5 /* Balance.hpp */,
 				503436E82EE87EA8005072BA /* Constants.hpp */,
 				50005B8A2ED2830C000A062C /* CFStringUtils.hpp */,

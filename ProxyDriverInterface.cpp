@@ -6,6 +6,7 @@
 
 #include "ProxyDriverInterface.hpp"
 
+#include "Context.hpp"
 #include "Utils.hpp"
 
 #ifdef __cplusplus
@@ -36,6 +37,9 @@ void* ProxyDriverInterfaceCreate(CFAllocatorRef inAllocator,
 
   const auto driverRef =
       ProxyAudio::ProxyDriverInterface::GetInstance().GetDriverRef();
+
+  std::shared_ptr<ProxyAudio::Context> context =
+      std::make_shared<ProxyAudio::Context>();
 
   Log("Success [driver: %p]", driverRef);
 
