@@ -1,0 +1,3 @@
+[submodule "libASPL"]
+	path = libASPL
+	url = git@github.com:gavv/libASPL.git
