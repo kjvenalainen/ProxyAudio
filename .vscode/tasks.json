@@ -2,129 +2,127 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build ProxyAudio",
+      "label": "Build (Release)",
       "type": "shell",
-      "command": "script/gxcWrapper.sh",
-      "args": [
-        "xcodebuild",
-        "-project",
-        "ProxyAudio.xcodeproj",
-        "-target",
-        "ProxyAudio",
-        "-configuration",
-        "Debug",
-        "build",
-        "CODE_SIGN_IDENTITY=",
-        "CODE_SIGNING_REQUIRED=NO"
-      ],
+      "command": "make",
+      "args": ["all"],
       "group": {
         "kind": "build",
         "isDefault": true
       },
+      "problemMatcher": ["$gcc"],
       "presentation": {
-        "echo": true,
-        "reveal": "always",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": true,
-        "clear": false
-      },
-      "problemMatcher": {
-        "owner": "xcode",
-        "fileLocation": ["relative", "${workspaceFolder}"],
-        "pattern": {
-          "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
-          "file": 1,
-          "line": 2,
-          "column": 3,
-          "severity": 4,
-          "message": 5
-        }
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Build (Debug)",
+      "type": "shell",
+      "command": "make",
+      "args": ["debug_build"],
+      "group": "build",
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
       }
     },
     {
       "label": "Build ProxyAudio (Release)",
       "type": "shell",
-      "command": "script/gxcWrapper.sh",
-      "args": [
-        "xcodebuild",
-        "-project",
-        "ProxyAudio.xcodeproj",
-        "-target",
-        "ProxyAudio",
-        "-configuration",
-        "Release",
-        "build",
-        "CODE_SIGN_IDENTITY=",
-        "CODE_SIGNING_REQUIRED=NO"
-      ],
+      "command": "make",
+      "args": ["proxyaudio_release_build"],
       "group": "build",
+      "problemMatcher": ["$gcc"],
       "presentation": {
-        "echo": true,
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Build ProxyAudio (Debug)",
+      "type": "shell",
+      "command": "make",
+      "args": ["proxyaudio_debug_build"],
+      "group": "build",
+      "problemMatcher": ["$gcc"],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Test",
+      "type": "shell",
+      "command": "make",
+      "args": ["test"],
+      "group": "test",
+      "problemMatcher": ["$gcc"],
+      "presentation": {
         "reveal": "always",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": true,
-        "clear": false
-      },
-      "problemMatcher": {
-        "owner": "xcode",
-        "fileLocation": ["relative", "${workspaceFolder}"],
-        "pattern": {
-          "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
-          "file": 1,
-          "line": 2,
-          "column": 3,
-          "severity": 4,
-          "message": 5
-        }
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Clean",
+      "type": "shell",
+      "command": "make",
+      "args": ["clean"],
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
       }
     },
     {
       "label": "Clean ProxyAudio",
       "type": "shell",
-      "command": "rm",
-      "args": ["-r", "${workspaceFolder}/build"],
+      "command": "make",
+      "args": ["proxyaudio_clean"],
       "group": "build",
+      "problemMatcher": [],
       "presentation": {
-        "echo": true,
-        "reveal": "always",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": true,
-        "clear": false
-      },
-      "problemMatcher": []
+        "reveal": "silent",
+        "panel": "shared"
+      }
     },
     {
-      "label": "Install ProxyAudio",
+      "label": "Format Code",
       "type": "shell",
-      "command": "script/install.sh",
+      "command": "make",
+      "args": ["fmt"],
       "group": "build",
+      "problemMatcher": [],
       "presentation": {
-        "echo": true,
-        "reveal": "always",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": true,
-        "clear": false
-      },
-      "problemMatcher": []
+        "reveal": "silent",
+        "panel": "shared"
+      }
     },
     {
-      "label": "Uninstall ProxyAudio",
+      "label": "Generate compile_commands.json",
       "type": "shell",
-      "command": "sudo rm -rf /Library/Audio/Plug-Ins/HAL/ProxyAudio.driver && sudo killall -9 coreaudiod",
+      "command": "make",
+      "args": ["compile_commands"],
       "group": "build",
+      "problemMatcher": [],
       "presentation": {
-        "echo": true,
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Install",
+      "type": "shell",
+      "command": "make",
+      "args": ["install"],
+      "group": "build",
+      "problemMatcher": ["$gcc"],
+      "presentation": {
         "reveal": "always",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": true,
-        "clear": false
-      },
-      "problemMatcher": []
+        "panel": "shared"
+      }
     }
   ]
 }
