@@ -21,6 +21,27 @@ constexpr UInt32 SineFrequency = 500;
 constexpr UInt32 SampleRate = 44100;
 constexpr UInt32 ChannelCount = 2;
 
+class DriverHandler : public aspl::DriverRequestHandler {
+ public:
+  DriverHandler(std::shared_ptr<aspl::Context> context) : context_(context) {}
+
+  // Invoked when HAL performs asynchrnous initialization.
+  OSStatus OnInitialize() override {
+    auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context_);
+
+    context_->Tracer->Message("[INITIALIZE] Found %zu output devices",
+                              outputDevices.size());
+    for (auto deviceID : outputDevices) {
+      context_->Tracer->Message("[INITIALIZE] Output device: %u", deviceID);
+    }
+
+    return kAudioHardwareNoError;
+  }
+
+ private:
+  std::shared_ptr<aspl::Context> context_;
+};
+
 // Control and I/O request handler.
 class ProxyAudioHandler : public aspl::ControlRequestHandler, public aspl::IORequestHandler
 {
@@ -70,41 +91,12 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
   // You can provide custom tracer here.
   auto context = std::make_shared<aspl::Context>();
 
-  auto outputDevices = EnumerateAudioOutputDevices(context);
+  auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context);
 
   tracer->Message("Found %zu output devices", outputDevices.size());
   for (auto deviceID : outputDevices) {
     tracer->Message("Output device: %u", deviceID);
   }
-
-  // Create device object with some custom parameters.
-  aspl::DeviceParameters deviceParams;
-  deviceParams.Name = "Proxy Audio Device";
-  deviceParams.Manufacturer = "Tap Turtle";
-  deviceParams.SampleRate = SampleRate;
-  deviceParams.ChannelCount = ChannelCount;
-
-  auto device = std::make_shared<aspl::Device>(context, deviceParams);
-
-  // Add to device one stream, one volume control, and one mute control.
-  // Associate volume and mute control with the stream.
-  //
-  // If desired, you can provide parameters for streams and controls as well,
-  // but for simplicity we use defaults here.
-  //
-  // HAL will use stream and controls to determine how to work with our device
-  // and to store volume and mute settings.
-  //
-  // IORequestHandler will use stream to apply stored volume and mute settings.
-  device->AddStreamWithControlsAsync(aspl::Direction::Input);
-  device->AddStreamWithControlsAsync(aspl::Direction::Output);
-
-  // Create and set custom handler for both control and I/O requests.
-  // You can use separate handlers, but here we use one.
-  auto handler = std::make_shared<ProxyAudioHandler>();
-
-  device->SetControlHandler(handler);
-  device->SetIOHandler(handler);
 
   // Create plugin object, the root of the object hierarchy, and add
   // our device to it.
@@ -114,12 +106,12 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
   // For simplicity we use default parameters.
   auto plugin = std::make_shared<aspl::Plugin>(context);
 
-  plugin->AddDevice(device);
-
   // Create driver, the top-level entry point.
   // Driver owns plugin object and thus the whole object hierarchy,
   // and provides C interface for HAL.
   auto driver = std::make_shared<aspl::Driver>(context, plugin);
+  auto driverHandler = std::make_shared<DriverHandler>(context);
+  driver->SetDriverHandler(std::move(driverHandler));
 
   return driver;
 }

@@ -3,61 +3,32 @@
 
 #pragma once
 
-#include <CoreAudio/AudioHardware.h>
-
-#include <aspl/Context.hpp>
-#include <expected>
-#include <memory>
-#include <span>
+#include <cstdint>
 #include <vector>
 
-OSStatus GetPropertyDataSize(AudioObjectID objectID,
-                             const AudioObjectPropertyAddress& address,
-                             void* inputData,
-                             uint32_t inputDataSize,
-                             uint32_t& dataSize) {
-  return AudioObjectGetPropertyDataSize(objectID, &address, inputDataSize,
-                                        inputData, &dataSize);
-}
+#include "AudioObjectUtils.hpp"
+#include "aspl/Context.hpp"
 
-OSStatus GetPropertyData(AudioObjectID objectID,
-                         const AudioObjectPropertyAddress& address,
-                         void* inputData,
-                         uint32_t inputDataSize,
-                         void* outputData,
-                         uint32_t& outputDataSize) {
-  return AudioObjectGetPropertyData(objectID, &address, inputDataSize,
-                                    inputData, &outputDataSize, outputData);
-}
+namespace ProxyAudio {
 
 std::vector<AudioObjectID> EnumerateAudioOutputDevices(
     std::shared_ptr<aspl::Context> context) {
-  uint32_t size = 0;
-  OSStatus status =
-      GetPropertyDataSize(kAudioObjectSystemObject,
-                          {
-                              .mSelector = kAudioHardwarePropertyDevices,
-                              .mScope = kAudioObjectPropertyScopeGlobal,
-                              .mElement = kAudioObjectPropertyElementMain,
-                          },
-                          nullptr, 0, size);
+  try {
+    auto devices = ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
+        kAudioObjectSystemObject,
+        {
+            .mSelector = kAudioHardwarePropertyDevices,
+            .mScope = kAudioObjectPropertyScopeGlobal,
+            .mElement = kAudioObjectPropertyElementMain,
+        },
+        {});
 
-  if (size != noErr) {
-    context->Tracer->Message("Failed to get devices size: %d", size);
+    return devices;
+  } catch (const OSStatusError& e) {
+    context->Tracer->Message("Failed to get devices: %s", e.what());
 
     return {};
   }
-
-  std::vector<AudioObjectID> devices(size);
-  uint32_t ioDataSize = size;
-
-  status = GetPropertyData(kAudioObjectSystemObject,
-                           {
-                               .mSelector = kAudioHardwarePropertyDevices,
-                               .mScope = kAudioObjectPropertyScopeGlobal,
-                               .mElement = kAudioObjectPropertyElementMain,
-                           },
-                           nullptr, 0, devices.data(), ioDataSize);
-
-  return devices;
 }
+
+}  // namespace ProxyAudio
