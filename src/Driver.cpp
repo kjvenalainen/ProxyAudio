@@ -1,12 +1,16 @@
 // Copyright (c) libASPL authors
 // Licensed under MIT
 
-#include <aspl/Driver.hpp>
-
 #include <CoreAudio/AudioServerPlugIn.h>
 
+// Include type_traits before libASPL headers to ensure std::is_trivial is
+// available when libASPL's DoubleBuffer.hpp is parsed (it uses std::is_trivial
+// without including it)
+#include <aspl/Driver.hpp>
 #include <cmath>
 #include <limits>
+
+#include "Utils.hpp"
 
 namespace {
 
@@ -59,55 +63,65 @@ private:
 
 std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
 {
-    // Create context, shared between all other objects.
-    // You can provide custom tracer here.
-    auto context = std::make_shared<aspl::Context>();
+  auto tracer = std::make_shared<aspl::Tracer>();
+  tracer->Message("Creating Proxy Audio Driver");
 
-    // Create device object with some custom parameters.
-    aspl::DeviceParameters deviceParams;
-    deviceParams.Name = "Proxy Audio Device";
-    deviceParams.Manufacturer = "Tap Turtle";
-    deviceParams.SampleRate = SampleRate;
-    deviceParams.ChannelCount = ChannelCount;
+  // Create context, shared between all other objects.
+  // You can provide custom tracer here.
+  auto context = std::make_shared<aspl::Context>();
 
-    auto device = std::make_shared<aspl::Device>(context, deviceParams);
+  auto outputDevices = EnumerateAudioOutputDevices(context);
 
-    // Add to device one stream, one volume control, and one mute control.
-    // Associate volume and mute control with the stream.
-    //
-    // If desired, you can provide parameters for streams and controls as well,
-    // but for simplicity we use defaults here.
-    //
-    // HAL will use stream and controls to determine how to work with our device
-    // and to store volume and mute settings.
-    //
-    // IORequestHandler will use stream to apply stored volume and mute settings.
-    device->AddStreamWithControlsAsync(aspl::Direction::Input);
-    device->AddStreamWithControlsAsync(aspl::Direction::Output);
+  tracer->Message("Found %zu output devices", outputDevices.size());
+  for (auto deviceID : outputDevices) {
+    tracer->Message("Output device: %u", deviceID);
+  }
 
-    // Create and set custom handler for both control and I/O requests.
-    // You can use separate handlers, but here we use one.
-    auto handler = std::make_shared<ProxyAudioHandler>();
+  // Create device object with some custom parameters.
+  aspl::DeviceParameters deviceParams;
+  deviceParams.Name = "Proxy Audio Device";
+  deviceParams.Manufacturer = "Tap Turtle";
+  deviceParams.SampleRate = SampleRate;
+  deviceParams.ChannelCount = ChannelCount;
 
-    device->SetControlHandler(handler);
-    device->SetIOHandler(handler);
+  auto device = std::make_shared<aspl::Device>(context, deviceParams);
 
-    // Create plugin object, the root of the object hierarchy, and add
-    // our device to it.
-    //
-    // The main purpose of plugin is to provide the list of devices to HAL.
-    //
-    // For simplicity we use default parameters.
-    auto plugin = std::make_shared<aspl::Plugin>(context);
+  // Add to device one stream, one volume control, and one mute control.
+  // Associate volume and mute control with the stream.
+  //
+  // If desired, you can provide parameters for streams and controls as well,
+  // but for simplicity we use defaults here.
+  //
+  // HAL will use stream and controls to determine how to work with our device
+  // and to store volume and mute settings.
+  //
+  // IORequestHandler will use stream to apply stored volume and mute settings.
+  device->AddStreamWithControlsAsync(aspl::Direction::Input);
+  device->AddStreamWithControlsAsync(aspl::Direction::Output);
 
-    plugin->AddDevice(device);
+  // Create and set custom handler for both control and I/O requests.
+  // You can use separate handlers, but here we use one.
+  auto handler = std::make_shared<ProxyAudioHandler>();
 
-    // Create driver, the top-level entry point.
-    // Driver owns plugin object and thus the whole object hierarchy,
-    // and provides C interface for HAL.
-    auto driver = std::make_shared<aspl::Driver>(context, plugin);
+  device->SetControlHandler(handler);
+  device->SetIOHandler(handler);
 
-    return driver;
+  // Create plugin object, the root of the object hierarchy, and add
+  // our device to it.
+  //
+  // The main purpose of plugin is to provide the list of devices to HAL.
+  //
+  // For simplicity we use default parameters.
+  auto plugin = std::make_shared<aspl::Plugin>(context);
+
+  plugin->AddDevice(device);
+
+  // Create driver, the top-level entry point.
+  // Driver owns plugin object and thus the whole object hierarchy,
+  // and provides C interface for HAL.
+  auto driver = std::make_shared<aspl::Driver>(context, plugin);
+
+  return driver;
 }
 
 } // namespace

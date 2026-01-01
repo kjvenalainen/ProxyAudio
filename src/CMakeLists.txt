@@ -1,7 +1,7 @@
 # THIS FILE IS GENERATED FROM TEMPLATE. DO NOT EDIT!
 cmake_minimum_required(VERSION 3.12.0)
 
-project(SinewaveDevice CXX)
+project(ProxyAudio CXX)
 
 # set compiler options
 set(CMAKE_CXX_STANDARD 17)
@@ -63,10 +63,12 @@ target_link_libraries(${DRIVER_NAME}
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/libASPL-prefix/lib/libASPL.a
 )
 
-# add CoreFoundation dependency
+# add CoreFoundation and CoreAudio dependencies
 find_library(LIB_CoreFoundation CoreFoundation REQUIRED)
+find_library(LIB_CoreAudio CoreAudio REQUIRED)
 target_link_libraries(${DRIVER_NAME}
   PRIVATE ${LIB_CoreFoundation}
+  PRIVATE ${LIB_CoreAudio}
 )
 
 # here we adjust properties of our shared library and ask CMake to pack it into
