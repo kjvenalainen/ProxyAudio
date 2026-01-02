@@ -1,6 +1,7 @@
 // Copyright (c) libASPL authors
 // Licensed under MIT
 
+#include <CoreAudio/AudioHardwareBase.h>
 #include <CoreAudio/AudioServerPlugIn.h>
 
 // Include type_traits before libASPL headers to ensure std::is_trivial is
@@ -10,6 +11,8 @@
 #include <cmath>
 #include <limits>
 
+#include "Error.hpp"
+#include "ProxyDevice.hpp"
 #include "Utils.hpp"
 
 namespace {
@@ -26,17 +29,7 @@ class DriverHandler : public aspl::DriverRequestHandler {
   DriverHandler(std::shared_ptr<aspl::Context> context) : context_(context) {}
 
   // Invoked when HAL performs asynchrnous initialization.
-  OSStatus OnInitialize() override {
-    auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context_);
-
-    context_->Tracer->Message("[INITIALIZE] Found %zu output devices",
-                              outputDevices.size());
-    for (auto deviceID : outputDevices) {
-      context_->Tracer->Message("[INITIALIZE] Output device: %u", deviceID);
-    }
-
-    return kAudioHardwareNoError;
-  }
+  OSStatus OnInitialize() override { return kAudioHardwareNoError; }
 
  private:
   std::shared_ptr<aspl::Context> context_;
@@ -85,17 +78,30 @@ private:
 std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
 {
   auto tracer = std::make_shared<aspl::Tracer>();
-  tracer->Message("Creating Proxy Audio Driver");
 
   // Create context, shared between all other objects.
   // You can provide custom tracer here.
   auto context = std::make_shared<aspl::Context>();
 
-  auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context);
+  AudioObjectID targetDeviceId = kAudioObjectUnknown;
+  try {
+    auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context);
+    tracer->Message("Found %zu output devices", outputDevices.size());
 
-  tracer->Message("Found %zu output devices", outputDevices.size());
-  for (auto deviceID : outputDevices) {
-    tracer->Message("Output device: %u", deviceID);
+    for (auto deviceID : outputDevices) {
+      auto deviceName = ProxyAudio::GetDeviceName(deviceID);
+      tracer->Message("Output device: %u - %s", deviceID, deviceName.c_str());
+
+      if (deviceName == "MacBook Pro Speakers") {
+        tracer->Message("Found target device: %u - %s", deviceID,
+                        deviceName.c_str());
+        targetDeviceId = deviceID;
+      }
+    }
+
+  } catch (const ProxyAudio::OSStatusError& e) {
+    tracer->Message("Failed to enumerate output devices: %s", e.what());
+    return nullptr;
   }
 
   // Create plugin object, the root of the object hierarchy, and add
@@ -105,6 +111,18 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
   //
   // For simplicity we use default parameters.
   auto plugin = std::make_shared<aspl::Plugin>(context);
+
+  if (targetDeviceId != kAudioObjectUnknown) {
+    auto proxyDevice =
+        std::make_shared<ProxyAudio::ProxyDevice>(context, targetDeviceId);
+    proxyDevice->AddStreamWithControlsAsync(aspl::Direction::Output);
+
+    auto proxyDeviceHandler = std::make_shared<ProxyAudioHandler>();
+    proxyDevice->SetControlHandler(proxyDeviceHandler);
+    proxyDevice->SetIOHandler(proxyDeviceHandler);
+
+    plugin->AddDevice(std::move(proxyDevice));
+  }
 
   // Create driver, the top-level entry point.
   // Driver owns plugin object and thus the whole object hierarchy,

@@ -31,4 +31,15 @@ std::vector<AudioObjectID> EnumerateAudioOutputDevices(
   }
 }
 
+std::string GetDeviceName(AudioObjectID deviceID) {
+  return ProxyAudio::GetPropertyData<std::string>(
+      deviceID,
+      {
+          .mSelector = kAudioObjectPropertyName,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
+}
+
 }  // namespace ProxyAudio

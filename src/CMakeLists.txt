@@ -52,6 +52,7 @@ ExternalProject_Add(${LIBASPL_TARGET}
 # - https://stackoverflow.com/a/2339910/3169754
 add_library(${DRIVER_NAME} MODULE
   "Driver.cpp"
+  "ProxyDevice.cpp"
 )
 
 # add libASPL dependency

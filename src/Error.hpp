@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "CFUtils.hpp"
+
 namespace ProxyAudio {
 
 class OSStatusError : public std::runtime_error {
@@ -45,8 +47,20 @@ class OSStatusError : public std::runtime_error {
     }
   }
 
+  static std::string GetAddressContext(
+      AudioObjectPropertyAddress addressContext) {
+    return FourCC(addressContext.mSelector) + " " +
+           FourCC(addressContext.mScope) + " " +
+           FourCC(addressContext.mElement);
+  }
+
   OSStatusError(OSStatus status)
       : std::runtime_error(GetMessage(status)), status(status) {}
+
+  OSStatusError(OSStatus status, AudioObjectPropertyAddress addressContext)
+      : std::runtime_error(std::string(GetMessage(status)) + " at " +
+                           GetAddressContext(addressContext)),
+        status(status) {}
 
   OSStatus GetStatus() const noexcept { return status; }
 
