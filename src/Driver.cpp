@@ -11,8 +11,10 @@
 #include <cmath>
 #include <limits>
 
+#include "CommonProperties.hpp"
 #include "Error.hpp"
 #include "ProxyDevice.hpp"
+#include "Tracer.hpp"
 #include "Utils.hpp"
 
 namespace {
@@ -77,30 +79,34 @@ private:
 
 std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
 {
-  auto tracer = std::make_shared<aspl::Tracer>();
+  auto tracer = std::make_shared<ProxyAudio::Tracer>();
 
   // Create context, shared between all other objects.
   // You can provide custom tracer here.
-  auto context = std::make_shared<aspl::Context>();
+  auto context = std::make_shared<aspl::Context>(tracer);
 
   AudioObjectID targetDeviceId = kAudioObjectUnknown;
   try {
     auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context);
-    tracer->Message("Found %zu output devices", outputDevices.size());
+    tracer->Message("CreateProxyAudioDriver:Found %zu output devices",
+                    outputDevices.size());
 
     for (auto deviceID : outputDevices) {
-      auto deviceName = ProxyAudio::GetDeviceName(deviceID);
-      tracer->Message("Output device: %u - %s", deviceID, deviceName.c_str());
+      auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
+      tracer->Message("CreateProxyAudioDriver:Output device: %u - %s", deviceID,
+                      deviceName.c_str());
 
       if (deviceName == "MacBook Pro Speakers") {
-        tracer->Message("Found target device: %u - %s", deviceID,
-                        deviceName.c_str());
+        tracer->Message("CreateProxyAudioDriver:Found target device: %u - %s",
+                        deviceID, deviceName.c_str());
         targetDeviceId = deviceID;
       }
     }
 
   } catch (const ProxyAudio::OSStatusError& e) {
-    tracer->Message("Failed to enumerate output devices: %s", e.what());
+    tracer->Message(
+        "CreateProxyAudioDriver:Failed to enumerate output devices: %s",
+        e.what());
     return nullptr;
   }
 
@@ -113,15 +119,25 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
   auto plugin = std::make_shared<aspl::Plugin>(context);
 
   if (targetDeviceId != kAudioObjectUnknown) {
-    auto proxyDevice =
-        std::make_shared<ProxyAudio::ProxyDevice>(context, targetDeviceId);
-    proxyDevice->AddStreamWithControlsAsync(aspl::Direction::Output);
+    try {
+      context->Tracer->Message(
+          "CreateProxyAudioDriver:Creating proxy device for target device: %u",
+          targetDeviceId);
 
-    auto proxyDeviceHandler = std::make_shared<ProxyAudioHandler>();
-    proxyDevice->SetControlHandler(proxyDeviceHandler);
-    proxyDevice->SetIOHandler(proxyDeviceHandler);
+      auto proxyDevice =
+          std::make_shared<ProxyAudio::ProxyDevice>(targetDeviceId, context);
+      proxyDevice->AddStreamWithControlsAsync(aspl::Direction::Output);
 
-    plugin->AddDevice(std::move(proxyDevice));
+      auto proxyDeviceHandler = std::make_shared<ProxyAudioHandler>();
+      proxyDevice->SetControlHandler(proxyDeviceHandler);
+      proxyDevice->SetIOHandler(proxyDeviceHandler);
+
+      plugin->AddDevice(std::move(proxyDevice));
+    } catch (const ProxyAudio::OSStatusError& e) {
+      // We already logged the error, so just continue with no device.
+      context->Tracer->Message(
+          "CreateProxyAudioDriver:Failed to create proxy device: %s", e.what());
+    }
   }
 
   // Create driver, the top-level entry point.

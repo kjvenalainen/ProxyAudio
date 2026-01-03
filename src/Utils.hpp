@@ -25,21 +25,11 @@ std::vector<AudioObjectID> EnumerateAudioOutputDevices(
 
     return devices;
   } catch (const OSStatusError& e) {
-    context->Tracer->Message("Failed to get devices: %s", e.what());
+    context->Tracer->Message(
+        "EnumerateAudioOutputDevices:Failed to get devices: %s", e.what());
 
     return {};
   }
-}
-
-std::string GetDeviceName(AudioObjectID deviceID) {
-  return ProxyAudio::GetPropertyData<std::string>(
-      deviceID,
-      {
-          .mSelector = kAudioObjectPropertyName,
-          .mScope = kAudioObjectPropertyScopeGlobal,
-          .mElement = kAudioObjectPropertyElementMain,
-      },
-      {});
 }
 
 }  // namespace ProxyAudio

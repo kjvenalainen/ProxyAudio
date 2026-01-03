@@ -51,8 +51,8 @@ ExternalProject_Add(${LIBASPL_TARGET}
 # - https://cmake.org/cmake/help/latest/command/add_library.html
 # - https://stackoverflow.com/a/2339910/3169754
 add_library(${DRIVER_NAME} MODULE
+  "CommonProperties.cpp"
   "Driver.cpp"
-  "ProxyDevice.cpp"
 )
 
 # add libASPL dependency
