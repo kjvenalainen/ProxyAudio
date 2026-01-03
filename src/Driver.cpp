@@ -126,7 +126,7 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
 
       auto proxyDevice =
           std::make_shared<ProxyAudio::ProxyDevice>(targetDeviceId, context);
-      proxyDevice->AddStreamWithControlsAsync(aspl::Direction::Output);
+      proxyDevice->AddProxyStreams();
 
       auto proxyDeviceHandler = std::make_shared<ProxyAudioHandler>();
       proxyDevice->SetControlHandler(proxyDeviceHandler);

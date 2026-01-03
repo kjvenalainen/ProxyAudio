@@ -4,6 +4,7 @@
 #include "CommonProperties.hpp"
 
 #include "AudioObjectUtils.hpp"
+#include "aspl/Direction.hpp"
 
 namespace ProxyAudio {
 
@@ -41,7 +42,7 @@ std::string GetDeviceModelUIDProperty(AudioObjectID deviceID) {
 }
 
 bool GetDeviceCanBeDefaultProperty(AudioObjectID deviceID) {
-  return GetPropertyData<uint32_t>(
+  return GetPropertyData<UInt32>(
              deviceID,
              {
                  .mSelector = kAudioDevicePropertyDeviceCanBeDefaultDevice,
@@ -52,7 +53,7 @@ bool GetDeviceCanBeDefaultProperty(AudioObjectID deviceID) {
 }
 
 bool GetDeviceCanBeDefaultForSystemSoundsProperty(AudioObjectID deviceID) {
-  return GetPropertyData<uint32_t>(
+  return GetPropertyData<UInt32>(
              deviceID,
              {
                  .mSelector =
@@ -72,6 +73,52 @@ uint32_t GetDeviceSampleRateProperty(AudioObjectID deviceID) {
           .mElement = kAudioObjectPropertyElementMain,
       },
       {}));
+}
+
+aspl::Direction GetDirectionProperty(AudioObjectID streamID) {
+  return GetPropertyData<UInt32>(
+             streamID,
+             {
+                 .mSelector = kAudioStreamPropertyDirection,
+                 .mScope = kAudioObjectPropertyScopeGlobal,
+                 .mElement = kAudioObjectPropertyElementMain,
+             },
+             {}) == 0
+             ? aspl::Direction::Output
+             : aspl::Direction::Input;
+}
+
+uint32_t GetStartingChannelProperty(AudioObjectID streamID) {
+  return GetPropertyData<UInt32>(
+      streamID,
+      {
+          .mSelector = kAudioStreamPropertyStartingChannel,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
+}
+
+AudioStreamBasicDescription GetFormatProperty(AudioObjectID streamID) {
+  return GetPropertyData<AudioStreamBasicDescription>(
+      streamID,
+      {
+          .mSelector = kAudioStreamPropertyVirtualFormat,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
+}
+
+uint32_t GetLatencyProperty(AudioObjectID streamID) {
+  return GetPropertyData<UInt32>(
+      streamID,
+      {
+          .mSelector = kAudioStreamPropertyLatency,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
 }
 
 }  // namespace ProxyAudio

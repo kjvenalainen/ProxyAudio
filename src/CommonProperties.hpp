@@ -5,6 +5,7 @@
 
 #include <CoreAudio/AudioHardware.h>
 
+#include <aspl/Direction.hpp>
 #include <memory>
 #include <string>
 
@@ -21,5 +22,13 @@ bool GetDeviceCanBeDefaultProperty(AudioObjectID deviceID);
 bool GetDeviceCanBeDefaultForSystemSoundsProperty(AudioObjectID deviceID);
 
 uint32_t GetDeviceSampleRateProperty(AudioObjectID deviceID);
+
+aspl::Direction GetDirectionProperty(AudioObjectID streamID);
+
+uint32_t GetStartingChannelProperty(AudioObjectID streamID);
+
+AudioStreamBasicDescription GetFormatProperty(AudioObjectID streamID);
+
+uint32_t GetLatencyProperty(AudioObjectID streamID);
 
 }  // namespace ProxyAudio

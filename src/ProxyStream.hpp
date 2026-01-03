@@ -9,9 +9,12 @@
 #include <aspl/Stream.hpp>
 #include <memory>
 
+#include "AudioObjectUtils.hpp"
 #include "CommonProperties.hpp"
 #include "Error.hpp"
 #include "ProxyObject.hpp"
+#include "ProxyStream.hpp"
+#include "Utils.hpp"
 
 namespace ProxyAudio {
 
@@ -27,21 +30,31 @@ struct BaseTraits<ProxyStream> {
 };
 
 // A aspl::Stream which clones all of the Audio Object properties from the
-// target Stream on creation.
+// target device on creation.
 class ProxyStream : public ProxyObject<ProxyStream> {
   friend struct ProxyObject<ProxyStream>;
 
  protected:
   static aspl::StreamParameters GetParameters(
-      std::shared_ptr<const aspl::Context> context,
-      const AudioObjectID targetStreamID) {
-    context->Tracer->Message(
-        "ProxyStream:GetParameters() Getting target parameters");
-
+      const AudioObjectID targetStreamID,
+      std::shared_ptr<const aspl::Context> context) {
     try {
+      // Direction, starting channel, and format, latency.
       aspl::StreamParameters parameters{
-
+          .Direction = GetDirectionProperty(targetStreamID),
+          .StartingChannel = GetStartingChannelProperty(targetStreamID),
+          .Format = GetFormatProperty(targetStreamID),
+          .Latency = GetLatencyProperty(targetStreamID),
       };
+
+      context->Tracer->Message(
+          "ProxyStream:GetParameters() Target stream: %u, Direction: %s, "
+          "StartingChannel: %u, "
+          "Format: %s, Latency: %u",
+          targetStreamID,
+          parameters.Direction == aspl::Direction::Output ? "Output" : "Input",
+          parameters.StartingChannel, ToString(parameters.Format).c_str(),
+          parameters.Latency);
 
       return parameters;
     } catch (const OSStatusError& e) {
@@ -55,11 +68,17 @@ class ProxyStream : public ProxyObject<ProxyStream> {
   }
 
  public:
-  explicit ProxyStream(const AudioObjectID targetStreamID,
+  explicit ProxyStream(const AudioObjectID targetObjectID,
                        std::shared_ptr<const aspl::Context> context,
-                       std::shared_ptr<aspl::Device> device,
-                       aspl::Direction direction)
-      : ProxyObject<ProxyStream>(targetStreamID, context, device) {}
+                       std::shared_ptr<aspl::Device> parentDevice)
+      : ProxyObject<ProxyStream>(targetObjectID,
+                                 context,
+                                 parentDevice,
+                                 GetParameters(targetObjectID, context)) {
+    GetContext()->Tracer->Message(
+        "ProxyStream:ProxyStream() Creating proxy for object: %u",
+        targetObjectID);
+  }
 
   virtual ~ProxyStream() = default;
 };

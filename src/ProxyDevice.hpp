@@ -8,6 +8,7 @@
 #include <aspl/Context.hpp>
 #include <aspl/Device.hpp>
 #include <memory>
+#include <stdexcept>
 
 #include "AudioObjectUtils.hpp"
 #include "CommonProperties.hpp"
@@ -63,26 +64,37 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
   }
 
  public:
-  explicit ProxyDevice(const AudioObjectID targetDeviceID,
+  explicit ProxyDevice(const AudioObjectID targetObjectID,
                        std::shared_ptr<const aspl::Context> context)
-      : ProxyObject<ProxyDevice>(targetDeviceID,
+      : ProxyObject<ProxyDevice>(targetObjectID,
                                  context,
-                                 GetParameters(targetDeviceID, context)) {
+                                 GetParameters(targetObjectID, context)) {
     GetContext()->Tracer->Message(
-        "ProxyDevice:ProxyDevice() Creating proxy device for target device: %u",
-        targetDeviceID);
+        "ProxyDevice:ProxyDevice() Creating proxy for object: %u",
+        targetObjectID);
 
-    auto numberOfOutputStreams = ProxyAudio::GetPropertyDataSize(
-        targetDeviceID,
+    auto targetDeviceClass = ProxyAudio::GetPropertyData<AudioClassID>(
+        targetObjectID,
         {
-            .mSelector = kAudioDevicePropertyStreams,
-            .mScope = kAudioObjectPropertyScopeOutput,
+            .mSelector = kAudioObjectPropertyClass,
+            .mScope = kAudioObjectPropertyScopeGlobal,
             .mElement = kAudioObjectPropertyElementMain,
         },
         {});
 
-    auto numberOfInputStreams = ProxyAudio::GetPropertyDataSize(
-        targetDeviceID,
+    if (targetDeviceClass != kAudioDeviceClassID) {
+      throw OSStatusError(kAudioHardwareBadObjectError,
+                          {
+                              .mSelector = kAudioObjectPropertyClass,
+                              .mScope = kAudioObjectPropertyScopeGlobal,
+                              .mElement = kAudioObjectPropertyElementMain,
+                          });
+    }
+  }
+
+  void AddProxyStreams() {
+    auto inputStreams = ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
+        GetTargetObjectID(),
         {
             .mSelector = kAudioDevicePropertyStreams,
             .mScope = kAudioObjectPropertyScopeInput,
@@ -90,9 +102,35 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
         },
         {});
 
+    auto outputStreams =
+        ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
+            GetTargetObjectID(),
+            {
+                .mSelector = kAudioDevicePropertyStreams,
+                .mScope = kAudioObjectPropertyScopeOutput,
+                .mElement = kAudioObjectPropertyElementMain,
+            },
+            {});
+
     GetContext()->Tracer->Message(
-        "ProxyDevice:ProxyDevice() Cloning %u input and %u output streams.",
-        numberOfInputStreams, numberOfOutputStreams);
+        "ProxyDevice:ProxyDevice() Cloning %lu input and %lu output streams.",
+        inputStreams.size(), outputStreams.size());
+
+    for (auto streamID : inputStreams) {
+      auto stream = std::make_shared<ProxyStream>(
+          streamID, GetContext(),
+          std::static_pointer_cast<aspl::Device>(shared_from_this()));
+
+      AddStreamAsync(std::move(stream));
+    }
+
+    for (auto streamID : outputStreams) {
+      auto stream = std::make_shared<ProxyStream>(
+          streamID, GetContext(),
+          std::static_pointer_cast<aspl::Device>(shared_from_this()));
+
+      AddStreamAsync(std::move(stream));
+    }
   }
 
   virtual ~ProxyDevice() = default;
