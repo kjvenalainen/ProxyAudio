@@ -9,11 +9,9 @@
 #include <aspl/Stream.hpp>
 #include <memory>
 
-#include "AudioObjectUtils.hpp"
 #include "CommonProperties.hpp"
 #include "Error.hpp"
 #include "ProxyObject.hpp"
-#include "ProxyStream.hpp"
 #include "Utils.hpp"
 
 namespace ProxyAudio {

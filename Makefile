@@ -17,6 +17,9 @@ release_cmake:
 
 release_build: release_cmake
 	cd build/Release && make -j$(NUM_CPU)
+	python3 script/merge_compile_commands.py compile_commands.json \
+		build/Release/compile_commands.json
+	python3 script/fix_compile_commands_paths.py compile_commands.json .
 
 debug_cmake:
 	mkdir -p build/Debug
@@ -29,6 +32,9 @@ debug_cmake:
 
 debug_build: debug_cmake
 	cd build/Debug && make -j$(NUM_CPU)
+	python3 script/merge_compile_commands.py compile_commands.json \
+		build/Debug/compile_commands.json
+	python3 script/fix_compile_commands_paths.py compile_commands.json .
 
 proxyaudio_release_cmake:
 	mkdir -p build/ProxyAudio/Release
@@ -40,6 +46,10 @@ proxyaudio_release_cmake:
 
 proxyaudio_release_build: proxyaudio_release_cmake
 	cd build/ProxyAudio/Release && make -j$(NUM_CPU)
+	python3 script/merge_compile_commands.py compile_commands.json \
+		build/ProxyAudio/Release/compile_commands.json \
+		build/ProxyAudio/Release/libASPL-build/compile_commands.json
+	python3 script/fix_compile_commands_paths.py compile_commands.json .
 
 proxyaudio_debug_cmake:
 	mkdir -p build/ProxyAudio/Debug
@@ -50,6 +60,10 @@ proxyaudio_debug_cmake:
 
 proxyaudio_debug_build: proxyaudio_debug_cmake
 	cd build/ProxyAudio/Debug && make -j$(NUM_CPU)
+	python3 script/merge_compile_commands.py compile_commands.json \
+		build/ProxyAudio/Debug/compile_commands.json \
+		build/ProxyAudio/Debug/libASPL-build/compile_commands.json
+	python3 script/fix_compile_commands_paths.py compile_commands.json .
 
 .PHONY: test
 test: debug_build

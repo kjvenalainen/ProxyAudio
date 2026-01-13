@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <sstream>
 #include <vector>
 
@@ -45,6 +46,93 @@ std::string ToString(const AudioStreamBasicDescription& format) {
   ss << "frames/pkt: " << format.mFramesPerPacket << ", ";
   ss << "bytes/frame: " << format.mBytesPerFrame << ", ";
   ss << "bytes/pkt: " << format.mBytesPerPacket << "}";
+
+  return ss.str();
+}
+
+template <typename T>
+T DbToRawScalar(T db) {
+  return std::pow(T(10.0), db / T(20.0));
+}
+
+// Given a device, walk the inheritance tree by repeatedly getting
+// kAudioObjectPropertyOwnedObjects. For each object get some basic info
+// about it and print the whole tree to a string.
+std::string DumpDeviceTree(AudioObjectID deviceId) {
+  std::stringstream ss;
+
+  // Helper function to recursively dump object tree
+  std::function<void(AudioObjectID, int)> dumpObject;
+  dumpObject = [&](AudioObjectID objectId, int depth) {
+    std::string indent(depth * 2, ' ');
+
+    // Get object class
+    std::string objectClass = "unknown";
+    try {
+      auto classId = GetPropertyData<AudioClassID>(
+          objectId,
+          {
+              .mSelector = kAudioObjectPropertyClass,
+              .mScope = kAudioObjectPropertyScopeGlobal,
+              .mElement = kAudioObjectPropertyElementMain,
+          },
+          {});
+      objectClass = FourCC(classId);
+    } catch (...) {
+      // Ignore errors
+    }
+
+    // Get object name
+    std::string objectName = "unnamed";
+    try {
+      objectName = GetPropertyData<std::string>(
+          objectId,
+          {
+              .mSelector = kAudioObjectPropertyName,
+              .mScope = kAudioObjectPropertyScopeGlobal,
+              .mElement = kAudioObjectPropertyElementMain,
+          },
+          {});
+    } catch (...) {
+      // Ignore errors - not all objects have names
+    }
+
+    unsigned int ownedObjectsCount =
+        GetPropertyDataSize(objectId,
+                            {
+                                .mSelector = kAudioObjectPropertyOwnedObjects,
+                                .mScope = kAudioObjectPropertyScopeGlobal,
+                                .mElement = kAudioObjectPropertyElementMain,
+                            },
+                            {}) /
+        sizeof(AudioObjectID);
+
+    ss << indent << "Object ID: " << objectId << ", Class: " << objectClass
+       << ", Name: " << objectName << ", Owned objects: " << ownedObjectsCount
+       << "\n";
+
+    // Get owned objects
+    try {
+      auto ownedObjects = GetPropertyData<std::vector<AudioObjectID>>(
+          objectId,
+          {
+              .mSelector = kAudioObjectPropertyOwnedObjects,
+              .mScope = kAudioObjectPropertyScopeGlobal,
+              .mElement = kAudioObjectPropertyElementMain,
+          },
+          {});
+
+      // Recursively dump owned objects
+      for (auto ownedId : ownedObjects) {
+        dumpObject(ownedId, depth + 1);
+      }
+    } catch (...) {
+      // Ignore errors - not all objects have owned objects
+    }
+  };
+
+  // Start dumping from the device
+  dumpObject(deviceId, 0);
 
   return ss.str();
 }

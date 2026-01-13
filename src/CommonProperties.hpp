@@ -31,4 +31,8 @@ AudioStreamBasicDescription GetFormatProperty(AudioObjectID streamID);
 
 uint32_t GetLatencyProperty(AudioObjectID streamID);
 
+AudioObjectPropertyScope GetScopeProperty(AudioObjectID volumeControlID);
+
+AudioValueRange GetDecibelRangeProperty(AudioObjectID volumeControlID);
+
 }  // namespace ProxyAudio

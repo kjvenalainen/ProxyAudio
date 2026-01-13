@@ -120,6 +120,10 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
 
   if (targetDeviceId != kAudioObjectUnknown) {
     try {
+      auto deviceTree = ProxyAudio::DumpDeviceTree(targetDeviceId);
+      context->Tracer->Message("CreateProxyAudioDriver:Device tree:\n%s",
+                               deviceTree.c_str());
+
       context->Tracer->Message(
           "CreateProxyAudioDriver:Creating proxy device for target device: %u",
           targetDeviceId);

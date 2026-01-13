@@ -3,6 +3,8 @@
 
 #include "CommonProperties.hpp"
 
+#include <CoreAudio/AudioHardwareBase.h>
+
 #include "AudioObjectUtils.hpp"
 #include "aspl/Direction.hpp"
 
@@ -115,6 +117,28 @@ uint32_t GetLatencyProperty(AudioObjectID streamID) {
       streamID,
       {
           .mSelector = kAudioStreamPropertyLatency,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
+}
+
+AudioObjectPropertyScope GetScopeProperty(AudioObjectID volumeControlID) {
+  return GetPropertyData<AudioObjectPropertyScope>(
+      volumeControlID,
+      {
+          .mSelector = kAudioControlPropertyScope,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
+}
+
+AudioValueRange GetDecibelRangeProperty(AudioObjectID volumeControlID) {
+  return GetPropertyData<AudioValueRange>(
+      volumeControlID,
+      {
+          .mSelector = kAudioLevelControlPropertyDecibelRange,
           .mScope = kAudioObjectPropertyScopeGlobal,
           .mElement = kAudioObjectPropertyElementMain,
       },
