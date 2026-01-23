@@ -52,20 +52,24 @@ class ProxyVolumeControl : public ProxyObject<ProxyVolumeControl> {
           .MaxDecibelVolume = static_cast<Float32>(decibelRange.mMaximum),
       };
 
-      context->Tracer->Message(
-          "ProxyVolumeControl:GetParameters() Target volume control: %u, "
-          "MinRawVolume: %d, MaxRawVolume: %d, MinDecibelVolume: %f, "
-          "MaxDecibelVolume: %f",
-          targetVolumeControlID, parameters.MinRawVolume,
-          parameters.MaxRawVolume, parameters.MinDecibelVolume,
-          parameters.MaxDecibelVolume);
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(
+              ProxyAudio::Tracer::Info,
+              "ProxyVolumeControl:GetParameters() Target volume control: %u, "
+              "MinRawVolume: %d, MaxRawVolume: %d, MinDecibelVolume: %f, "
+              "MaxDecibelVolume: %f",
+              targetVolumeControlID, parameters.MinRawVolume,
+              parameters.MaxRawVolume, parameters.MinDecibelVolume,
+              parameters.MaxDecibelVolume);
 
       return parameters;
     } catch (const OSStatusError& e) {
-      context->Tracer->Message(
-          "ProxyVolumeControl:GetParameters() Failed to get target parameters: "
-          "%s",
-          e.what());
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(ProxyAudio::Tracer::Info,
+                    "ProxyVolumeControl:GetParameters() Failed to get target "
+                    "parameters: "
+                    "%s",
+                    e.what());
 
       throw e;
     }
@@ -78,9 +82,11 @@ class ProxyVolumeControl : public ProxyObject<ProxyVolumeControl> {
             targetObjectID,
             context,
             GetParameters(targetObjectID, context)) {
-    GetContext()->Tracer->Message(
-        "ProxyVolumeControl:ProxyVolumeControl() Creating proxy for object: %u",
-        targetObjectID);
+    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "ProxyVolumeControl:ProxyVolumeControl() Creating proxy for "
+                  "object: %u",
+                  targetObjectID);
   }
 
   virtual ~ProxyVolumeControl() = default;

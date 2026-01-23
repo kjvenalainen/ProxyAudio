@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <CoreAudio/AudioHardwareBase.h>
+#include <MacTypes.h>
+
 #include <cstdint>
 #include <functional>
 #include <sstream>
@@ -10,7 +13,10 @@
 
 #include "AudioObjectUtils.hpp"
 #include "CFUtils.hpp"
+#include "CommonProperties.hpp"
+#include "Tracer.hpp"
 #include "aspl/Context.hpp"
+#include "aspl/Direction.hpp"
 
 namespace ProxyAudio {
 
@@ -28,8 +34,10 @@ std::vector<AudioObjectID> EnumerateAudioOutputDevices(
 
     return devices;
   } catch (const OSStatusError& e) {
-    context->Tracer->Message(
-        "EnumerateAudioOutputDevices:Failed to get devices: %s", e.what());
+    ProxyAudio::Tracer::FromTracer(context->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "EnumerateAudioOutputDevices:Failed to get devices: %s",
+                  e.what());
 
     return {};
   }
@@ -55,6 +63,77 @@ T DbToRawScalar(T db) {
   return std::pow(T(10.0), db / T(20.0));
 }
 
+void DumpStreamInfo(std::stringstream& ss, AudioObjectID stream) {
+  try {
+    const auto classId = GetPropertyData<AudioClassID>(
+        stream,
+        {
+            .mSelector = kAudioObjectPropertyClass,
+            .mScope = kAudioObjectPropertyScopeGlobal,
+            .mElement = kAudioObjectPropertyElementMain,
+        },
+        {});
+
+    if (classId != kAudioStreamClassID) {
+      ss << "Not a stream!";
+      return;
+    }
+
+    const auto direction = GetDirectionProperty(stream);
+    const auto startingChannel = GetStartingChannelProperty(stream);
+    ss << "Direction: "
+       << (direction == aspl::Direction::Input ? "Input" : "Output")
+       << ", StartingChannel: " << startingChannel;
+
+  } catch (...) {
+  }
+}
+
+void DumpVolumeControlInfo(std::stringstream& ss, AudioObjectID volume) {
+  try {
+    const auto classId = GetPropertyData<AudioClassID>(
+        volume,
+        {
+            .mSelector = kAudioObjectPropertyClass,
+            .mScope = kAudioObjectPropertyScopeGlobal,
+            .mElement = kAudioObjectPropertyElementMain,
+        },
+        {});
+
+    if (classId != kAudioVolumeControlClassID) {
+      ss << "Not a volume control!";
+      return;
+    }
+
+    const auto scope = GetScopeProperty(volume);
+    const auto element = GetElementProperty(volume);
+    ss << "Scope: ";
+    switch (scope) {
+      case kAudioObjectPropertyScopeInput:
+        ss << "Input";
+        break;
+      case kAudioObjectPropertyScopeOutput:
+        ss << "Output";
+        break;
+      case kAudioObjectPropertyScopeGlobal:
+        ss << "Global";
+        break;
+    }
+
+    ss << ", Element: ";
+    switch (element) {
+      case kAudioObjectPropertyElementMain:
+        ss << "Main";
+        break;
+      default:
+        ss << FourCC(element) << " (" << std::to_string(element) << ")";
+        break;
+    }
+
+  } catch (...) {
+  }
+}
+
 // Given a device, walk the inheritance tree by repeatedly getting
 // kAudioObjectPropertyOwnedObjects. For each object get some basic info
 // about it and print the whole tree to a string.
@@ -65,11 +144,15 @@ std::string DumpDeviceTree(AudioObjectID deviceId) {
   std::function<void(AudioObjectID, int)> dumpObject;
   dumpObject = [&](AudioObjectID objectId, int depth) {
     std::string indent(depth * 2, ' ');
+    for (int i = 0; i < depth * 2; i += 2) {
+      indent[i] = '|';
+    }
 
     // Get object class
     std::string objectClass = "unknown";
+    unsigned int classId = kInvalidID;
     try {
-      auto classId = GetPropertyData<AudioClassID>(
+      classId = GetPropertyData<AudioClassID>(
           objectId,
           {
               .mSelector = kAudioObjectPropertyClass,
@@ -108,8 +191,22 @@ std::string DumpDeviceTree(AudioObjectID deviceId) {
         sizeof(AudioObjectID);
 
     ss << indent << "Object ID: " << objectId << ", Class: " << objectClass
-       << ", Name: " << objectName << ", Owned objects: " << ownedObjectsCount
-       << "\n";
+       << ", Name: " << objectName << ", Children: " << ownedObjectsCount;
+
+    switch (classId) {
+      case kAudioStreamClassID:
+        ss << " [";
+        DumpStreamInfo(ss, objectId);
+        ss << "]";
+        break;
+      case kAudioVolumeControlClassID:
+        ss << " [";
+        DumpVolumeControlInfo(ss, objectId);
+        ss << "]";
+        break;
+    }
+
+    ss << "\n";
 
     // Get owned objects
     try {

@@ -15,6 +15,7 @@
 #include "Error.hpp"
 #include "ProxyObject.hpp"
 #include "ProxyStream.hpp"
+#include "Tracer.hpp"
 
 namespace ProxyAudio {
 
@@ -38,8 +39,9 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
   static aspl::DeviceParameters GetParameters(
       const AudioObjectID targetDeviceID,
       std::shared_ptr<const aspl::Context> context) {
-    context->Tracer->Message(
-        "ProxyDevice:GetParameters() Getting target parameters");
+    ProxyAudio::Tracer::FromTracer(context->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "ProxyDevice:GetParameters() Getting target parameters");
 
     try {
       aspl::DeviceParameters parameters{
@@ -54,10 +56,12 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
 
       return parameters;
     } catch (const OSStatusError& e) {
-      context->Tracer->Message(
-          "ProxyDevice:GetParameters() Failed to get target parameters: "
-          "%s",
-          e.what());
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(
+              ProxyAudio::Tracer::Info,
+              "ProxyDevice:GetParameters() Failed to get target parameters: "
+              "%s",
+              e.what());
 
       throw e;
     }
@@ -69,9 +73,10 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
       : ProxyObject<ProxyDevice>(targetObjectID,
                                  context,
                                  GetParameters(targetObjectID, context)) {
-    GetContext()->Tracer->Message(
-        "ProxyDevice:ProxyDevice() Creating proxy for object: %u",
-        targetObjectID);
+    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "ProxyDevice:ProxyDevice() Creating proxy for object: %u",
+                  targetObjectID);
 
     auto targetDeviceClass = ProxyAudio::GetPropertyData<AudioClassID>(
         targetObjectID,
@@ -112,9 +117,11 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
             },
             {});
 
-    GetContext()->Tracer->Message(
-        "ProxyDevice:ProxyDevice() Cloning %lu input and %lu output streams.",
-        inputStreams.size(), outputStreams.size());
+    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "ProxyDevice:ProxyDevice() Cloning %lu input and %lu output "
+                  "streams.",
+                  inputStreams.size(), outputStreams.size());
 
     for (auto streamID : inputStreams) {
       auto stream = std::make_shared<ProxyStream>(

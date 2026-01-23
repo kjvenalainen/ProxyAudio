@@ -134,6 +134,17 @@ AudioObjectPropertyScope GetScopeProperty(AudioObjectID volumeControlID) {
       {});
 }
 
+AudioObjectPropertyElement GetElementProperty(AudioObjectID volumeControlID) {
+  return GetPropertyData<AudioObjectPropertyElement>(
+      volumeControlID,
+      {
+          .mSelector = kAudioControlPropertyElement,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
+}
+
 AudioValueRange GetDecibelRangeProperty(AudioObjectID volumeControlID) {
   return GetPropertyData<AudioValueRange>(
       volumeControlID,

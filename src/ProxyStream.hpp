@@ -12,6 +12,7 @@
 #include "CommonProperties.hpp"
 #include "Error.hpp"
 #include "ProxyObject.hpp"
+#include "Tracer.hpp"
 #include "Utils.hpp"
 
 namespace ProxyAudio {
@@ -45,21 +46,26 @@ class ProxyStream : public ProxyObject<ProxyStream> {
           .Latency = GetLatencyProperty(targetStreamID),
       };
 
-      context->Tracer->Message(
-          "ProxyStream:GetParameters() Target stream: %u, Direction: %s, "
-          "StartingChannel: %u, "
-          "Format: %s, Latency: %u",
-          targetStreamID,
-          parameters.Direction == aspl::Direction::Output ? "Output" : "Input",
-          parameters.StartingChannel, ToString(parameters.Format).c_str(),
-          parameters.Latency);
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(
+              ProxyAudio::Tracer::Info,
+              "ProxyStream:GetParameters() Target stream: %u, Direction: %s, "
+              "StartingChannel: %u, "
+              "Format: %s, Latency: %u",
+              targetStreamID,
+              parameters.Direction == aspl::Direction::Output ? "Output"
+                                                              : "Input",
+              parameters.StartingChannel, ToString(parameters.Format).c_str(),
+              parameters.Latency);
 
       return parameters;
     } catch (const OSStatusError& e) {
-      context->Tracer->Message(
-          "ProxyStream:GetParameters() Failed to get target parameters: "
-          "%s",
-          e.what());
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(
+              ProxyAudio::Tracer::Info,
+              "ProxyStream:GetParameters() Failed to get target parameters: "
+              "%s",
+              e.what());
 
       throw e;
     }
@@ -73,9 +79,10 @@ class ProxyStream : public ProxyObject<ProxyStream> {
                                  context,
                                  parentDevice,
                                  GetParameters(targetObjectID, context)) {
-    GetContext()->Tracer->Message(
-        "ProxyStream:ProxyStream() Creating proxy for object: %u",
-        targetObjectID);
+    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "ProxyStream:ProxyStream() Creating proxy for object: %u",
+                  targetObjectID);
   }
 
   virtual ~ProxyStream() = default;

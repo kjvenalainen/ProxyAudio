@@ -33,6 +33,8 @@ uint32_t GetLatencyProperty(AudioObjectID streamID);
 
 AudioObjectPropertyScope GetScopeProperty(AudioObjectID volumeControlID);
 
+AudioObjectPropertyElement GetElementProperty(AudioObjectID volumeControlID);
+
 AudioValueRange GetDecibelRangeProperty(AudioObjectID volumeControlID);
 
 }  // namespace ProxyAudio
