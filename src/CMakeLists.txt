@@ -32,11 +32,13 @@ get_filename_component(LIBASPL_SOURCE_DIR
 
 # add rules for building libASPL and installing it into a prefix
 set(LIBASPL_TARGET ProxyAudio_libASPL)
+set(PATCHES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../patches)
 include(ExternalProject)
 ExternalProject_Add(${LIBASPL_TARGET}
   SOURCE_DIR ${LIBASPL_SOURCE_DIR}
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/libASPL-build
   INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/libASPL-prefix
+  PATCH_COMMAND ${PATCHES_DIR}/apply-patches.sh ${LIBASPL_SOURCE_DIR} ${PATCHES_DIR}/libASPL
   CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
   LOG_DOWNLOAD YES
   LOG_CONFIGURE YES
@@ -53,6 +55,8 @@ ExternalProject_Add(${LIBASPL_TARGET}
 add_library(${DRIVER_NAME} MODULE
   "CommonProperties.cpp"
   "Driver.cpp"
+  "ProxyVolumeControl.cpp"
+  "Utils.cpp"
 )
 
 # add libASPL dependency

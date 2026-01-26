@@ -1,0 +1,27 @@
+diff --git a/include/aspl/VolumeControl.hpp b/include/aspl/VolumeControl.hpp
+index 7e38e47..9da3d32 100644
+--- a/include/aspl/VolumeControl.hpp
++++ b/include/aspl/VolumeControl.hpp
+@@ -68,6 +68,9 @@ public:
+     explicit VolumeControl(std::shared_ptr<const Context> context,
+         const VolumeControlParameters& params = {});
+ 
++    //! Destructor.
++    ~VolumeControl() override;
++
+     //! @name Getters and setters
+     //! @{
+ 
+diff --git a/src/VolumeControl.cpp b/src/VolumeControl.cpp
+index e9a0aa0..1edd673 100644
+--- a/src/VolumeControl.cpp
++++ b/src/VolumeControl.cpp
+@@ -24,6 +24,8 @@ VolumeControl::VolumeControl(std::shared_ptr<const Context> context,
+         params_.MaxDecibelVolume);
+ }
+ 
++VolumeControl::~VolumeControl() = default;
++
+ AudioObjectPropertyScope VolumeControl::GetScope() const
+ {
+     return params_.Scope;

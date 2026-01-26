@@ -4,6 +4,8 @@
 #pragma once
 
 #include <CoreAudio/AudioHardware.h>
+#include <CoreAudio/AudioHardwareBase.h>
+#include <CoreAudio/AudioHardwareDeprecated.h>
 
 #include <aspl/Context.hpp>
 #include <aspl/Device.hpp>
@@ -11,11 +13,15 @@
 #include <stdexcept>
 
 #include "AudioObjectUtils.hpp"
+#include "CFUtils.hpp"
 #include "CommonProperties.hpp"
 #include "Error.hpp"
+#include "ProxyMuteControl.hpp"
 #include "ProxyObject.hpp"
 #include "ProxyStream.hpp"
+#include "ProxyVolumeControl.hpp"
 #include "Tracer.hpp"
+#include "Utils.hpp"
 
 namespace ProxyAudio {
 
@@ -78,14 +84,7 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
                   "ProxyDevice:ProxyDevice() Creating proxy for object: %u",
                   targetObjectID);
 
-    auto targetDeviceClass = ProxyAudio::GetPropertyData<AudioClassID>(
-        targetObjectID,
-        {
-            .mSelector = kAudioObjectPropertyClass,
-            .mScope = kAudioObjectPropertyScopeGlobal,
-            .mElement = kAudioObjectPropertyElementMain,
-        },
-        {});
+    auto targetDeviceClass = GetClassIdProperty(targetObjectID);
 
     if (targetDeviceClass != kAudioDeviceClassID) {
       throw OSStatusError(kAudioHardwareBadObjectError,
@@ -117,9 +116,19 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
             },
             {});
 
+    auto controls = ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
+        GetTargetObjectID(),
+        {
+            .mSelector = kAudioObjectPropertyControlList,
+            .mScope = kAudioObjectPropertyScopeInput,
+            .mElement = kAudioObjectPropertyElementMain,
+        },
+        {});
+
     ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
         ->Message(ProxyAudio::Tracer::Info,
-                  "ProxyDevice:ProxyDevice() Cloning %lu input and %lu output "
+                  "ProxyDevice:ProxyDevice() Cloning %lu input and %lu "
+                  "output "
                   "streams.",
                   inputStreams.size(), outputStreams.size());
 
@@ -136,7 +145,40 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
           streamID, GetContext(),
           std::static_pointer_cast<aspl::Device>(shared_from_this()));
 
-      AddStreamAsync(std::move(stream));
+      AddStreamAsync(stream);
+
+      const auto volumeControlId =
+          GetControlId(kAudioVolumeControlClassID,
+                       kAudioDevicePropertyScopeOutput, controls);
+      if (volumeControlId != kAudioObjectUnknown) {
+        ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+            ->Message(ProxyAudio::Tracer::Info,
+                      "ProxyDevice:ProxyDevice() Cloning volume control for "
+                      "stream: %u",
+                      streamID);
+
+        auto volume =
+            std::make_shared<ProxyVolumeControl>(volumeControlId, GetContext());
+
+        AddVolumeControlAsync(volume);
+        stream->AttachVolumeControl(std::move(volume));
+      }
+
+      const auto muteControlId = GetControlId(
+          kAudioMuteControlClassID, kAudioDevicePropertyScopeOutput, controls);
+      if (muteControlId != kAudioObjectUnknown) {
+        ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+            ->Message(ProxyAudio::Tracer::Info,
+                      "ProxyDevice:ProxyDevice() Cloning mute control for "
+                      "stream: %u",
+                      streamID);
+
+        auto mute =
+            std::make_shared<ProxyMuteControl>(muteControlId, GetContext());
+
+        AddMuteControlAsync(mute);
+        stream->AttachMuteControl(std::move(mute));
+      }
     }
   }
 

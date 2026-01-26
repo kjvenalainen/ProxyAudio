@@ -10,6 +10,17 @@
 
 namespace ProxyAudio {
 
+AudioClassID GetClassIdProperty(AudioObjectID object) {
+  return GetPropertyData<AudioClassID>(
+      object,
+      {
+          .mSelector = kAudioObjectPropertyClass,
+          .mScope = kAudioObjectPropertyScopeGlobal,
+          .mElement = kAudioObjectPropertyElementMain,
+      },
+      {});
+}
+
 std::string GetDeviceNameProperty(AudioObjectID deviceID) {
   return GetPropertyData<std::string>(
       deviceID,
