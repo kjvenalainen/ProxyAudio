@@ -7,7 +7,6 @@
 
 #include <aspl/Context.hpp>
 #include <aspl/Device.hpp>
-#include <memory>
 
 namespace ProxyAudio {
 

@@ -50,6 +50,7 @@ struct Tracer : public aspl::Tracer {
     Debug = 0,
     Info = 1,
     Warn = 2,
+    Error = 3,
   };
 
   static constexpr size_t DepthSoftLimit = 10;

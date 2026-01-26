@@ -6,14 +6,10 @@
 #include <CoreAudio/AudioHardware.h>
 
 #include <aspl/Context.hpp>
-#include <aspl/Stream.hpp>
+#include <aspl/VolumeControl.hpp>
 #include <memory>
 
-#include "CommonProperties.hpp"
-#include "Error.hpp"
 #include "ProxyObject.hpp"
-#include "Utils.hpp"
-#include "aspl/VolumeControl.hpp"
 
 namespace ProxyAudio {
 
@@ -43,6 +39,13 @@ class ProxyVolumeControl : public ProxyObject<ProxyVolumeControl> {
                               std::shared_ptr<const aspl::Context> context);
 
   virtual ~ProxyVolumeControl() = default;
+
+  void ApplyProcessing(Float32* frames,
+                       UInt32 frameCount,
+                       UInt32 channelCount) const override;
+
+ protected:
+  OSStatus SetRawValueImpl(SInt32 value) override;
 };
 
 }  // namespace ProxyAudio
