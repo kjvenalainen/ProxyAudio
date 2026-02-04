@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "ProxyObject.hpp"
+#include "ProxyProperty.hpp"
 
 namespace ProxyAudio {
 
@@ -23,6 +24,11 @@ struct BaseTraits<ProxyVolumeControl> {
   typedef aspl::VolumeControl BaseType;
   typedef aspl::VolumeControlParameters ParametersType;
 };
+
+static constexpr AudioObjectPropertyAddress ScalarValueAddress = {
+    .mSelector = kAudioLevelControlPropertyScalarValue,
+    .mScope = kAudioObjectPropertyScopeGlobal,
+    .mElement = kAudioObjectPropertyElementMain};
 
 // A aspl::VolumeControl which clones all of the Audio Object properties from
 // the target device on creation.
@@ -46,6 +52,8 @@ class ProxyVolumeControl : public ProxyObject<ProxyVolumeControl> {
 
  protected:
   OSStatus SetRawValueImpl(SInt32 value) override;
+
+  ProxyProperty<Float32> scalarValueProxy_;
 };
 
 }  // namespace ProxyAudio

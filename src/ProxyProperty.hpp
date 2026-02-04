@@ -47,22 +47,16 @@ class ProxyProperty {
                   "ProxyProperty:ProxyProperty() Creating proxy for property: "
                   "%s",
                   ToString(address_).c_str());
-    GetValue();
     RegisterPropertyChangeCallback();
   }
 
   virtual ~ProxyProperty() { UnregisterPropertyChangeCallback(); }
 
-  // Get the current value of the property from the target object, updating the
-  // local value store.
+  // Get the current value of the property from the target object.
   const ValueType GetValue() const {
     try {
       const auto value =
           GetPropertyData<ValueType>(targetObjectID_, address_, {});
-
-      if (value != getter_()) {
-        setter_(value);
-      }
 
       ProxyAudio::Tracer::FromTracer(context_->Tracer)
           ->Message(ProxyAudio::Tracer::Info,
@@ -80,13 +74,10 @@ class ProxyProperty {
     }
   }
 
-  // Set the current value of the property on the target object.
+  // Set the current value of the property on the target object. Does not call
+  // the setter.
   void SetValue(const ValueType& value) {
     try {
-      if (value == getter_()) {
-        return;
-      }
-
       SetPropertyData(targetObjectID_, address_, {},
                       {
                           .ptr = const_cast<ValueType*>(&value),
@@ -115,7 +106,6 @@ class ProxyProperty {
       void* inClientData) {
     static_cast<ProxyProperty*>(inClientData)
         ->OnPropertyChanged(inObjectID, inNumberAddresses, inAddresses);
-
     return noErr;
   }
 
@@ -127,14 +117,15 @@ class ProxyProperty {
                   "ProxyProperty:OnPropertyChanged() %u properties changed",
                   inNumberAddresses);
 
-    // Get value will call the setter if the value has changed.
-    GetValue();
+    const auto newValue = GetValue();
+    if (newValue != getter_()) {
+      setter_(newValue);
+    }
   }
 
   void RegisterPropertyChangeCallback() {
     const auto status = AudioObjectAddPropertyListener(
         targetObjectID_, &address_, &OnPropertyChangedDispatch, this);
-
     if (status != noErr) {
       throw OSStatusError(status, address_);
     }

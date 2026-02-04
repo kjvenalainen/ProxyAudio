@@ -155,4 +155,13 @@ void ProxyDevice::AddProxyStreams() {
   }
 }
 
+void ProxyDevice::OnWriteMixedOutput(
+    const std::shared_ptr<aspl::Stream>& stream,
+    Float64 zeroTimestamp,
+    Float64 timestamp,
+    const void* bytes,
+    UInt32 bytesCount) {
+  // TODO: Pass data to the target device.
+}
+
 }  // namespace ProxyAudio

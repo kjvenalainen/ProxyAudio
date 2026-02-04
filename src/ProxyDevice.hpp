@@ -26,7 +26,9 @@ struct BaseTraits<ProxyDevice> {
 
 // A aspl::Device which clones all of the Audio Object properties from the
 // target device on creation.
-class ProxyDevice : public ProxyObject<ProxyDevice> {
+class ProxyDevice : public ProxyObject<ProxyDevice>,
+                    public aspl::IORequestHandler,
+                    public aspl::ControlRequestHandler {
   friend struct ProxyObject<ProxyDevice>;
 
  protected:
@@ -41,6 +43,12 @@ class ProxyDevice : public ProxyObject<ProxyDevice> {
   void AddProxyStreams();
 
   virtual ~ProxyDevice() = default;
+
+  void OnWriteMixedOutput(const std::shared_ptr<aspl::Stream>& stream,
+                          Float64 zeroTimestamp,
+                          Float64 timestamp,
+                          const void* bytes,
+                          UInt32 bytesCount) override;
 };
 
 }  // namespace ProxyAudio

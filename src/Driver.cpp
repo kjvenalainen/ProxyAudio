@@ -137,13 +137,12 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
               "%u",
               targetDeviceId);
 
+      // TODO: Fold all of this device setup into a factory function.
       auto proxyDevice =
           std::make_shared<ProxyAudio::ProxyDevice>(targetDeviceId, context);
       proxyDevice->AddProxyStreams();
-
-      auto proxyDeviceHandler = std::make_shared<ProxyAudioHandler>();
-      proxyDevice->SetControlHandler(proxyDeviceHandler);
-      proxyDevice->SetIOHandler(proxyDeviceHandler);
+      proxyDevice->SetIOHandler(proxyDevice);
+      proxyDevice->SetControlHandler(proxyDevice);
 
       plugin->AddDevice(std::move(proxyDevice));
 

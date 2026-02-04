@@ -54,15 +54,23 @@ aspl::VolumeControlParameters ProxyVolumeControl::GetParameters(
 ProxyVolumeControl::ProxyVolumeControl(
     const AudioObjectID targetObjectID,
     std::shared_ptr<const aspl::Context> context)
-    : ProxyObject<ProxyVolumeControl>(
+    : ProxyObject<ProxyVolumeControl>(targetObjectID,
+                                      context,
+                                      GetParameters(targetObjectID, context)),
+      scalarValueProxy_(
           targetObjectID,
           context,
-          GetParameters(targetObjectID, context)) {
+          ScalarValueAddress,
+          [this](const Float32& value) { this->SetScalarValue(value); },
+          [this]() { return this->GetScalarValue(); }) {
   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
       ->Message(ProxyAudio::Tracer::Info,
                 "ProxyVolumeControl:ProxyVolumeControl() Creating proxy for "
                 "object: %u",
                 targetObjectID);
+
+  // Set the initial value of the volume control.
+  SetScalarValue(scalarValueProxy_.GetValue());
 }
 
 void ProxyVolumeControl::ApplyProcessing(Float32* frames,
@@ -83,37 +91,7 @@ OSStatus ProxyVolumeControl::SetRawValueImpl(SInt32 value) {
     return status;
   }
 
-  // try {
-  //   float scalarValue = GetScalarValue();
-
-  //   ProxyAudio::SetPropertyData(
-  //       GetTargetObjectID(),
-  //       {
-  //           .mSelector = kAudioLevelControlPropertyScalarValue,
-  //           .mScope = GetScope(),
-  //           .mElement = GetElement(),
-  //       },
-  //       {},
-  //       {
-  //           .ptr = &scalarValue,
-  //           .size = sizeof(scalarValue),
-  //       });
-
-  //   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
-  //       ->Message(ProxyAudio::Tracer::Info,
-  //                 "ProxyVolumeControl:SetRawValueImpl() Set volume to %f",
-  //                 scalarValue);
-
-  //   return noErr;
-  // } catch (const OSStatusError& e) {
-  //   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
-  //       ->Message(ProxyAudio::Tracer::Error,
-  //                 "ProxyVolumeControl:SetRawValueImpl() Failed to set target
-  //                 " "volume control: %s", e.what());
-
-  //   return e.GetStatus();
-  // }
-
+  scalarValueProxy_.SetValue(GetScalarValue());
   return noErr;
 }
 
