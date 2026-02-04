@@ -3,6 +3,8 @@
 
 #include "ProxyMuteControl.hpp"
 
+#include <CoreAudio/AudioHardware.h>
+
 #include "CommonProperties.hpp"
 #include "Error.hpp"
 #include "Tracer.hpp"
@@ -40,12 +42,24 @@ ProxyMuteControl::ProxyMuteControl(const AudioObjectID targetObjectID,
                                    std::shared_ptr<const aspl::Context> context)
     : ProxyObject<ProxyMuteControl>(targetObjectID,
                                     context,
-                                    GetParameters(targetObjectID, context)) {
+                                    GetParameters(targetObjectID, context)),
+      mutedProxy_(
+          targetObjectID,
+          context,
+          MuteAddress,
+          [this](const bool& value) { this->SetIsMuted(value); },
+          [this]() { return this->GetIsMuted(); }) {
   ProxyAudio::Tracer::FromTracer(context->Tracer)
-      ->Message(
-          ProxyAudio::Tracer::Info,
-          "ProxyMuteControl:ProxyMuteControl() Creating proxy for object: %u",
-          targetObjectID);
+      ->Message(ProxyAudio::Tracer::Info,
+                "ProxyMuteControl:ProxyMuteControl() Creating proxy for "
+                "object: %u",
+                targetObjectID);
+}
+
+OSStatus ProxyMuteControl::SetIsMutedImpl(bool value) {
+  mutedProxy_.SetValue(value);
+
+  return aspl::MuteControl::SetIsMutedImpl(value);
 }
 
 void ProxyMuteControl::ApplyProcessing(Float32* frames,

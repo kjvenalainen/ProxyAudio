@@ -83,37 +83,38 @@ OSStatus ProxyVolumeControl::SetRawValueImpl(SInt32 value) {
     return status;
   }
 
-  try {
-    float scalarValue = GetScalarValue();
+  // try {
+  //   float scalarValue = GetScalarValue();
 
-    ProxyAudio::SetPropertyData(
-        GetTargetObjectID(),
-        {
-            .mSelector = kAudioLevelControlPropertyScalarValue,
-            .mScope = GetScope(),
-            .mElement = GetElement(),
-        },
-        {},
-        {
-            .ptr = &scalarValue,
-            .size = sizeof(scalarValue),
-        });
+  //   ProxyAudio::SetPropertyData(
+  //       GetTargetObjectID(),
+  //       {
+  //           .mSelector = kAudioLevelControlPropertyScalarValue,
+  //           .mScope = GetScope(),
+  //           .mElement = GetElement(),
+  //       },
+  //       {},
+  //       {
+  //           .ptr = &scalarValue,
+  //           .size = sizeof(scalarValue),
+  //       });
 
-    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
-        ->Message(ProxyAudio::Tracer::Info,
-                  "ProxyVolumeControl:SetRawValueImpl() Set volume to %f",
-                  scalarValue);
+  //   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+  //       ->Message(ProxyAudio::Tracer::Info,
+  //                 "ProxyVolumeControl:SetRawValueImpl() Set volume to %f",
+  //                 scalarValue);
 
-    return noErr;
-  } catch (const OSStatusError& e) {
-    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
-        ->Message(ProxyAudio::Tracer::Error,
-                  "ProxyVolumeControl:SetRawValueImpl() Failed to set target "
-                  "volume control: %s",
-                  e.what());
+  //   return noErr;
+  // } catch (const OSStatusError& e) {
+  //   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+  //       ->Message(ProxyAudio::Tracer::Error,
+  //                 "ProxyVolumeControl:SetRawValueImpl() Failed to set target
+  //                 " "volume control: %s", e.what());
 
-    return e.GetStatus();
-  }
+  //   return e.GetStatus();
+  // }
+
+  return noErr;
 }
 
 }  // namespace ProxyAudio

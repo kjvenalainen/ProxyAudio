@@ -146,6 +146,12 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
       proxyDevice->SetIOHandler(proxyDeviceHandler);
 
       plugin->AddDevice(std::move(proxyDevice));
+
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(ProxyAudio::Tracer::Info,
+                    "CreateProxyAudioDriver:Created proxy device for target "
+                    "device: %u",
+                    targetDeviceId);
     } catch (const ProxyAudio::OSStatusError& e) {
       // We already logged the error, so just continue with no device.
       ProxyAudio::Tracer::FromTracer(context->Tracer)

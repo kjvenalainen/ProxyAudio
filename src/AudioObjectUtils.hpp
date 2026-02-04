@@ -7,6 +7,7 @@
 #include <CoreFoundation/CFBase.h>
 
 #include <cstdint>
+#include <functional>
 #include <type_traits>
 
 #include "CFUtils.hpp"

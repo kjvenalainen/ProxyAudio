@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <CoreAudio/AudioHardwareBase.h>
 #include <CoreFoundation/CFBase.h>
+#include <CoreFoundation/CFNumber.h>
+#include <CoreFoundation/CFString.h>
 
 #include <string>
 #include <type_traits>
@@ -49,6 +52,15 @@ inline std::string FourCC(const UInt32& code) noexcept {
 inline UInt32 FourCC(const std::string& code) noexcept {
   const char* view = code.c_str();
   return view[0] << 24 | view[1] << 16 | view[2] << 8 | view[3];
+}
+
+inline std::string ToString(
+    const AudioObjectPropertyAddress& address) noexcept {
+  return std::string(FourCC(address.mSelector)) + ":" + FourCC(address.mScope) +
+         ":" +
+         (address.mElement == kAudioObjectPropertyElementMain
+              ? "main"
+              : FourCC(address.mElement));
 }
 
 // Auto-release wrapper for a CFTypeRef object.

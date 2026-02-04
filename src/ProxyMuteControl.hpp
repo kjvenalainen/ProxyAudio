@@ -4,12 +4,14 @@
 #pragma once
 
 #include <CoreAudio/AudioHardware.h>
+#include <CoreAudio/AudioHardwareBase.h>
 
 #include <aspl/Context.hpp>
 #include <aspl/MuteControl.hpp>
 #include <memory>
 
 #include "ProxyObject.hpp"
+#include "ProxyProperty.hpp"
 
 namespace ProxyAudio {
 
@@ -23,6 +25,11 @@ struct BaseTraits<ProxyMuteControl> {
   typedef aspl::MuteControl BaseType;
   typedef aspl::MuteControlParameters ParametersType;
 };
+
+static constexpr AudioObjectPropertyAddress MuteAddress = {
+    .mSelector = kAudioBooleanControlPropertyValue,
+    .mScope = kAudioObjectPropertyScopeGlobal,
+    .mElement = kAudioObjectPropertyElementMain};
 
 // A aspl::MuteControl which clones all of the Audio Object properties from
 // the target device on creation.
@@ -40,9 +47,14 @@ class ProxyMuteControl : public ProxyObject<ProxyMuteControl> {
 
   virtual ~ProxyMuteControl() = default;
 
+  OSStatus SetIsMutedImpl(bool value) override;
+
   void ApplyProcessing(Float32* frames,
                        UInt32 frameCount,
                        UInt32 channelCount) const override;
+
+ protected:
+  ProxyProperty<UInt32> mutedProxy_;
 };
 
 }  // namespace ProxyAudio
