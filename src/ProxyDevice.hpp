@@ -73,7 +73,10 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
                           UInt32 bytesCount) override;
 
  protected:
-  ProxyProperty<UInt32> latencyProxy_;
+  // Perform a sample rate change, recreating all streams with the new sample
+  // rate. This should be called via RequestConfigurationChange.
+  void PerformSampleRateChange(const Float64& value);
+
   ProxyProperty<Float64> sampleRateProxy_;
 };
 

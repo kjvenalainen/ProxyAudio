@@ -55,8 +55,6 @@ class ProxyStream : public ProxyObject<ProxyStream> {
   virtual ~ProxyStream() = default;
 
  protected:
-  ProxyProperty<UInt32> latencyProxy_;
-  ProxyProperty<AudioStreamBasicDescription> formatProxy_;
 };
 
 }  // namespace ProxyAudio

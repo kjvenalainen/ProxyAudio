@@ -4,7 +4,7 @@
 #include "ProxyDevice.hpp"
 
 #include <CoreAudio/AudioHardware.h>
-
+#include <MacTypes.h>
 
 #include "AudioObjectUtils.hpp"
 #include "CommonProperties.hpp"
@@ -17,6 +17,38 @@
 
 namespace ProxyAudio {
 
+static UInt32 GetDeviceLatencySafely(const AudioObjectID targetDeviceID) {
+  try {
+    // First try to get the latency from the target device on output scope.
+    return ProxyAudio::GetPropertyData<UInt32>(
+        targetDeviceID,
+        {
+            .mSelector = kAudioDevicePropertyLatency,
+            .mScope = kAudioObjectPropertyScopeOutput,
+            .mElement = kAudioObjectPropertyElementMain,
+        },
+        {});
+  } catch (const OSStatusError& e) {
+    // Swallow the error and try the next scope.
+  }
+  try {
+    // If that fails, try to get the latency from the target device on input
+    // scope.
+    return ProxyAudio::GetPropertyData<UInt32>(
+        targetDeviceID,
+        {
+            .mSelector = kAudioDevicePropertyLatency,
+            .mScope = kAudioObjectPropertyScopeInput,
+            .mElement = kAudioObjectPropertyElementMain,
+        },
+        {});
+  } catch (const OSStatusError& e) {
+    // Swallow the error.
+  }
+
+  return 0;
+}
+
 aspl::DeviceParameters ProxyDevice::GetParameters(
     const AudioObjectID targetDeviceID,
     std::shared_ptr<const aspl::Context> context) {
@@ -25,6 +57,15 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
                 "ProxyDevice:GetParameters() Getting target parameters");
 
   try {
+    const auto latency = ProxyAudio::GetPropertyData<UInt32>(
+        targetDeviceID,
+        {
+            .mSelector = kAudioDevicePropertyLatency,
+            .mScope = kAudioObjectPropertyScopeOutput,
+            .mElement = kAudioObjectPropertyElementMain,
+        },
+        {});
+
     aspl::DeviceParameters parameters{
         .Name = GetDeviceNameProperty(targetDeviceID) + " (Proxy)",
         .DeviceUID = GetDeviceUIDProperty(targetDeviceID) + "_proxy",
@@ -33,7 +74,13 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
         .CanBeDefaultForSystemSounds =
             GetDeviceCanBeDefaultForSystemSoundsProperty(targetDeviceID),
         .SampleRate = GetDeviceSampleRateProperty(targetDeviceID),
+        .Latency = GetDeviceLatencySafely(targetDeviceID),
     };
+
+    ProxyAudio::Tracer::FromTracer(context->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "ProxyDevice:GetParameters() Latency: %u",
+                  parameters.Latency);
 
     return parameters;
   } catch (const OSStatusError& e) {
@@ -53,32 +100,14 @@ ProxyDevice::ProxyDevice(const AudioObjectID targetObjectID,
     : ProxyObject<ProxyDevice>(targetObjectID,
                                context,
                                GetParameters(targetObjectID, context)),
-      latencyProxy_(
-          targetObjectID,
-          context,
-          DeviceLatencyAddress,
-          [this](const UInt32& value) { this->SetLatencyAsync(value); },
-          [this]() { return this->GetLatency(); }),
       sampleRateProxy_(
           targetObjectID,
           context,
           DeviceSampleRateAddress,
           [this](const Float64& value) {
             // TODO: Recreate streams with the new rates.
-            RequestConfigurationChange([this, value]() {
-              this->RemoveStreams();
-
-              const auto status = this->SetNominalSampleRateAsync(value);
-              if (status != noErr) {
-                ProxyAudio::Tracer::FromTracer(this->GetContext()->Tracer)
-                    ->Message(ProxyAudio::Tracer::Error,
-                              "ProxyDevice:sampleRateProxy_() Failed to set "
-                              "nominal sample rate: %s",
-                              status);
-              }
-
-              this->AddProxyStreams();
-            });
+            RequestConfigurationChange(
+                [this, value]() { PerformSampleRateChange(value); });
           },
           [this]() { return this->GetNominalSampleRate(); }) {
   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
@@ -114,7 +143,6 @@ ProxyDevice::ProxyDevice(const AudioObjectID targetObjectID,
                   status);
   }
 
-  SetLatencyAsync(latencyProxy_.GetValue());
   SetNominalSampleRateAsync(sampleRateProxy_.GetValue());
 }
 
@@ -168,9 +196,8 @@ void ProxyDevice::AddProxyStreams() {
 
     AddStreamAsync(stream);
 
-    const auto volumeControlId =
-        GetControlId(kAudioVolumeControlClassID,
-                     kAudioDevicePropertyScopeOutput, controls);
+    const auto volumeControlId = GetControlId(
+        kAudioVolumeControlClassID, kAudioDevicePropertyScopeOutput, controls);
     if (volumeControlId != kAudioObjectUnknown) {
       ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
           ->Message(ProxyAudio::Tracer::Info,
@@ -266,6 +293,25 @@ void ProxyDevice::OnWriteMixedOutput(
     const void* bytes,
     UInt32 bytesCount) {
   // TODO: Pass data to the target device.
+}
+
+void ProxyDevice::PerformSampleRateChange(const Float64& value) {
+  ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+      ->Message(ProxyAudio::Tracer::Info,
+                "ProxyDevice:PerformSampleRateChange() Device sample rate "
+                "changed to %f",
+                value);
+
+  RemoveStreams();
+
+  SetNominalSampleRateImpl(value);
+
+  AddProxyStreams();
+
+  NotifyPropertiesChanged({
+      kAudioDevicePropertyNominalSampleRate,
+      kAudioDevicePropertyStreams,
+  });
 }
 
 }  // namespace ProxyAudio
