@@ -4,10 +4,12 @@
 #pragma once
 
 #include <CoreAudio/AudioHardwareBase.h>
+#include <CoreAudioTypes/CoreAudioBaseTypes.h>
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFNumber.h>
 #include <CoreFoundation/CFString.h>
 
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -61,6 +63,60 @@ inline std::string ToString(
          (address.mElement == kAudioObjectPropertyElementMain
               ? "main"
               : FourCC(address.mElement));
+}
+
+template <typename T>
+inline std::string ToString(const T& value) noexcept {
+  return std::to_string(value);
+}
+
+template <>
+inline std::string ToString(const AudioStreamBasicDescription& value) noexcept {
+  std::stringstream ss;
+
+  ss << "{id: " << FourCC(value.mFormatID) << ", ";
+  ss << "flags: 0x" << std::hex << value.mFormatFlags << std::dec << ", ";
+  ss << "rate: " << value.mSampleRate << ", ";
+  ss << "bits: " << value.mBitsPerChannel << ", ";
+  ss << "chans: " << value.mChannelsPerFrame << ", ";
+  ss << "frames/pkt: " << value.mFramesPerPacket << ", ";
+  ss << "bytes/frame: " << value.mBytesPerFrame << ", ";
+  ss << "bytes/pkt: " << value.mBytesPerPacket << "}";
+
+  return ss.str();
+}
+
+template <>
+inline std::string ToString(const AudioValueRange& value) noexcept {
+  return "[" + std::to_string(value.mMinimum) + " - " +
+         std::to_string(value.mMaximum) + "]";
+}
+
+template <typename E>
+inline std::string ToString(const std::vector<E>& value) noexcept {
+  std::stringstream ss;
+  ss << "(" << value.size() << ") [";
+  for (const auto& range : value) {
+    ss << ToString(range) << ", ";
+  }
+  ss << "]";
+  return ss.str();
+}
+
+inline bool operator==(const AudioStreamBasicDescription& a,
+                       const AudioStreamBasicDescription& b) noexcept {
+  return a.mFormatID == b.mFormatID && a.mFormatFlags == b.mFormatFlags &&
+         a.mSampleRate == b.mSampleRate &&
+         a.mBitsPerChannel == b.mBitsPerChannel &&
+         a.mChannelsPerFrame == b.mChannelsPerFrame &&
+         a.mFramesPerPacket == b.mFramesPerPacket &&
+         a.mBytesPerFrame == b.mBytesPerFrame &&
+         a.mBytesPerPacket == b.mBytesPerPacket;
+}
+
+inline bool operator!=(const AudioStreamBasicDescription& a,
+                       const AudioStreamBasicDescription& b) noexcept {
+  return !(a == b);
 }
 
 // Auto-release wrapper for a CFTypeRef object.

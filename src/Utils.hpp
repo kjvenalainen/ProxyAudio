@@ -23,8 +23,6 @@ namespace ProxyAudio {
 std::vector<AudioObjectID> EnumerateAudioOutputDevices(
     std::shared_ptr<aspl::Context> context);
 
-std::string ToString(const AudioStreamBasicDescription& format);
-
 template <typename T>
 T DbToRawScalar(T db) {
   return std::pow(T(10.0), db / T(20.0));

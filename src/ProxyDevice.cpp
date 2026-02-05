@@ -52,14 +52,41 @@ ProxyDevice::ProxyDevice(const AudioObjectID targetObjectID,
                          std::shared_ptr<const aspl::Context> context)
     : ProxyObject<ProxyDevice>(targetObjectID,
                                context,
-                               GetParameters(targetObjectID, context)) {
+                               GetParameters(targetObjectID, context)),
+      latencyProxy_(
+          targetObjectID,
+          context,
+          DeviceLatencyAddress,
+          [this](const UInt32& value) { this->SetLatencyAsync(value); },
+          [this]() { return this->GetLatency(); }),
+      sampleRateProxy_(
+          targetObjectID,
+          context,
+          DeviceSampleRateAddress,
+          [this](const Float64& value) {
+            // TODO: Recreate streams with the new rates.
+            RequestConfigurationChange([this, value]() {
+              this->RemoveStreams();
+
+              const auto status = this->SetNominalSampleRateAsync(value);
+              if (status != noErr) {
+                ProxyAudio::Tracer::FromTracer(this->GetContext()->Tracer)
+                    ->Message(ProxyAudio::Tracer::Error,
+                              "ProxyDevice:sampleRateProxy_() Failed to set "
+                              "nominal sample rate: %s",
+                              status);
+              }
+
+              this->AddProxyStreams();
+            });
+          },
+          [this]() { return this->GetNominalSampleRate(); }) {
   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
       ->Message(ProxyAudio::Tracer::Info,
                 "ProxyDevice:ProxyDevice() Creating proxy for object: %u",
                 targetObjectID);
 
-  auto targetDeviceClass = GetClassIdProperty(targetObjectID);
-
+  const auto targetDeviceClass = GetClassIdProperty(targetObjectID);
   if (targetDeviceClass != kAudioDeviceClassID) {
     throw OSStatusError(kAudioHardwareBadObjectError,
                         {
@@ -68,6 +95,27 @@ ProxyDevice::ProxyDevice(const AudioObjectID targetObjectID,
                             .mElement = kAudioObjectPropertyElementMain,
                         });
   }
+
+  const auto availableSampleRates =
+      ProxyAudio::GetPropertyData<std::vector<AudioValueRange>>(
+          GetTargetObjectID(), DeviceAvailableSampleRatesAddress, {});
+
+  ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+      ->Message(ProxyAudio::Tracer::Info,
+                "ProxyDevice:ProxyDevice() Available sample rates: %s",
+                ToString(availableSampleRates).c_str());
+
+  auto status = SetAvailableSampleRatesAsync(availableSampleRates);
+  if (status != noErr) {
+    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+        ->Message(ProxyAudio::Tracer::Error,
+                  "ProxyDevice:ProxyDevice() Failed to set available sample "
+                  "rates: %s",
+                  status);
+  }
+
+  SetLatencyAsync(latencyProxy_.GetValue());
+  SetNominalSampleRateAsync(sampleRateProxy_.GetValue());
 }
 
 void ProxyDevice::AddProxyStreams() {
@@ -151,6 +199,62 @@ void ProxyDevice::AddProxyStreams() {
 
       AddMuteControlAsync(mute);
       stream->AttachMuteControl(std::move(mute));
+    }
+  }
+
+  // Proxy device handles its own I/O and control requests.
+  SetIOHandler(std::static_pointer_cast<ProxyDevice>(shared_from_this()));
+  SetControlHandler(std::static_pointer_cast<ProxyDevice>(shared_from_this()));
+}
+
+void ProxyDevice::RemoveStreams() {
+  ProxyAudio::Tracer::FromTracer(this->GetContext()->Tracer)
+      ->Message(ProxyAudio::Tracer::Info,
+                "ProxyDevice:RemoveStreams() Removing streams");
+
+  while (GetStreamCount(aspl::Direction::Input) > 0) {
+    auto stream = GetStreamByIndex(aspl::Direction::Input, 0);
+    if (stream) {
+      RemoveStreamAsync(stream);
+    }
+  }
+
+  while (GetStreamCount(aspl::Direction::Output) > 0) {
+    auto stream = GetStreamByIndex(aspl::Direction::Output, 0);
+    if (stream) {
+      RemoveStreamAsync(stream);
+    }
+  }
+
+  // Remove all volume and mute controls.
+  while (GetVolumeControlCount(kAudioObjectPropertyScopeInput) > 0) {
+    auto volumeControl =
+        GetVolumeControlByIndex(kAudioObjectPropertyScopeInput, 0);
+    if (volumeControl) {
+      RemoveVolumeControlAsync(volumeControl);
+    }
+  }
+
+  while (GetVolumeControlCount(kAudioObjectPropertyScopeOutput) > 0) {
+    auto volumeControl =
+        GetVolumeControlByIndex(kAudioObjectPropertyScopeOutput, 0);
+    if (volumeControl) {
+      RemoveVolumeControlAsync(volumeControl);
+    }
+  }
+
+  while (GetMuteControlCount(kAudioObjectPropertyScopeInput) > 0) {
+    auto muteControl = GetMuteControlByIndex(kAudioObjectPropertyScopeInput, 0);
+    if (muteControl) {
+      RemoveMuteControlAsync(muteControl);
+    }
+  }
+
+  while (GetMuteControlCount(kAudioObjectPropertyScopeOutput) > 0) {
+    auto muteControl =
+        GetMuteControlByIndex(kAudioObjectPropertyScopeOutput, 0);
+    if (muteControl) {
+      RemoveMuteControlAsync(muteControl);
     }
   }
 }

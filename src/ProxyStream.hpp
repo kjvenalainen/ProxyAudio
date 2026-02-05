@@ -4,6 +4,7 @@
 #pragma once
 
 #include <CoreAudio/AudioHardware.h>
+#include <CoreAudio/AudioHardwareBase.h>
 
 #include <aspl/Context.hpp>
 #include <aspl/Device.hpp>
@@ -11,6 +12,7 @@
 #include <memory>
 
 #include "ProxyObject.hpp"
+#include "ProxyProperty.hpp"
 
 namespace ProxyAudio {
 
@@ -24,6 +26,16 @@ struct BaseTraits<ProxyStream> {
   typedef aspl::Stream BaseType;
   typedef aspl::StreamParameters ParametersType;
 };
+
+static constexpr AudioObjectPropertyAddress StreamLatencyAddress = {
+    .mSelector = kAudioStreamPropertyLatency,
+    .mScope = kAudioObjectPropertyScopeGlobal,
+    .mElement = kAudioObjectPropertyElementMain};
+
+static constexpr AudioObjectPropertyAddress StreamFormatAddress = {
+    .mSelector = kAudioStreamPropertyPhysicalFormat,
+    .mScope = kAudioObjectPropertyScopeGlobal,
+    .mElement = kAudioObjectPropertyElementMain};
 
 // A aspl::Stream which clones all of the Audio Object properties from the
 // target device on creation.
@@ -41,6 +53,10 @@ class ProxyStream : public ProxyObject<ProxyStream> {
                        std::shared_ptr<aspl::Device> parentDevice);
 
   virtual ~ProxyStream() = default;
+
+ protected:
+  ProxyProperty<UInt32> latencyProxy_;
+  ProxyProperty<AudioStreamBasicDescription> formatProxy_;
 };
 
 }  // namespace ProxyAudio

@@ -32,6 +32,14 @@ class ProxyProperty {
   using SetterType = std::function<void(const ValueType& value)>;
   using GetterType = std::function<ValueType()>;
 
+  // Empty proxy, does nothing.
+  ProxyProperty()
+      : targetObjectID_(kAudioObjectUnknown),
+        context_(nullptr),
+        address_(),
+        setter_(),
+        getter_() {}
+
   ProxyProperty(const AudioObjectID targetObjectID,
                 std::shared_ptr<const aspl::Context> context,
                 const AudioObjectPropertyAddress& address,
@@ -50,6 +58,19 @@ class ProxyProperty {
     RegisterPropertyChangeCallback();
   }
 
+  ProxyProperty(const ProxyProperty& other) = delete;
+  ProxyProperty& operator=(const ProxyProperty& other) = delete;
+  ProxyProperty(ProxyProperty&& other) noexcept
+      : targetObjectID_(std::move(other.targetObjectID_)),
+        context_(std::move(other.context_)),
+        address_(std::move(other.address_)),
+        setter_(std::move(other.setter_)),
+        getter_(std::move(other.getter_)) {
+    other(ProxyProperty());
+    RegisterPropertyChangeCallback();
+  }
+  ProxyProperty& operator=(ProxyProperty&& other) noexcept = delete;
+
   virtual ~ProxyProperty() { UnregisterPropertyChangeCallback(); }
 
   // Get the current value of the property from the target object.
@@ -61,7 +82,7 @@ class ProxyProperty {
       ProxyAudio::Tracer::FromTracer(context_->Tracer)
           ->Message(ProxyAudio::Tracer::Info,
                     "ProxyProperty:GetValue() Got value: %s = %s",
-                    ToString(address_).c_str(), std::to_string(value).c_str());
+                    ToString(address_).c_str(), ToString(value).c_str());
 
       return value;
     } catch (const OSStatusError& e) {
@@ -134,7 +155,7 @@ class ProxyProperty {
         ->Message(ProxyAudio::Tracer::Info,
                   "ProxyProperty:RegisterPropertyChangeCallback() Registered "
                   "property change callback for property: %s",
-                  std::to_string(address_.mSelector).c_str());
+                  FourCC(address_.mSelector).c_str());
   }
 
   void UnregisterPropertyChangeCallback() {

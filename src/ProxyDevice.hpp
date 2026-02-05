@@ -4,12 +4,14 @@
 #pragma once
 
 #include <CoreAudio/AudioHardware.h>
+#include <MacTypes.h>
 
 #include <aspl/Context.hpp>
 #include <aspl/Device.hpp>
 #include <memory>
 
 #include "ProxyObject.hpp"
+#include "ProxyProperty.hpp"
 
 namespace ProxyAudio {
 
@@ -23,6 +25,21 @@ struct BaseTraits<ProxyDevice> {
   typedef aspl::Device BaseType;
   typedef aspl::DeviceParameters ParametersType;
 };
+
+static constexpr AudioObjectPropertyAddress DeviceLatencyAddress = {
+    .mSelector = kAudioDevicePropertyLatency,
+    .mScope = kAudioObjectPropertyScopeOutput,
+    .mElement = kAudioObjectPropertyElementMain};
+
+static constexpr AudioObjectPropertyAddress DeviceSampleRateAddress = {
+    .mSelector = kAudioDevicePropertyNominalSampleRate,
+    .mScope = kAudioObjectPropertyScopeGlobal,
+    .mElement = kAudioObjectPropertyElementMain};
+
+static constexpr AudioObjectPropertyAddress DeviceAvailableSampleRatesAddress =
+    {.mSelector = kAudioDevicePropertyAvailableNominalSampleRates,
+     .mScope = kAudioObjectPropertyScopeGlobal,
+     .mElement = kAudioObjectPropertyElementMain};
 
 // A aspl::Device which clones all of the Audio Object properties from the
 // target device on creation.
@@ -40,15 +57,24 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
   explicit ProxyDevice(const AudioObjectID targetObjectID,
                        std::shared_ptr<const aspl::Context> context);
 
+  virtual ~ProxyDevice() = default;
+
+  // Adds all streams from the target device to the proxy device
+  // as proxy streams.
   void AddProxyStreams();
 
-  virtual ~ProxyDevice() = default;
+  // Remove all streams from the proxy device.
+  void RemoveStreams();
 
   void OnWriteMixedOutput(const std::shared_ptr<aspl::Stream>& stream,
                           Float64 zeroTimestamp,
                           Float64 timestamp,
                           const void* bytes,
                           UInt32 bytesCount) override;
+
+ protected:
+  ProxyProperty<UInt32> latencyProxy_;
+  ProxyProperty<Float64> sampleRateProxy_;
 };
 
 }  // namespace ProxyAudio

@@ -79,7 +79,9 @@ private:
 
 std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
 {
-  auto tracer = std::make_shared<ProxyAudio::Tracer>();
+  auto tracer = std::make_shared<ProxyAudio::Tracer>(
+      ProxyAudio::Tracer::Mode::Syslog, ProxyAudio::Tracer::Style::Hierarchical,
+      ProxyAudio::Tracer::Level::Info);
 
   // Create context, shared between all other objects.
   // You can provide custom tracer here.
@@ -141,8 +143,6 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
       auto proxyDevice =
           std::make_shared<ProxyAudio::ProxyDevice>(targetDeviceId, context);
       proxyDevice->AddProxyStreams();
-      proxyDevice->SetIOHandler(proxyDevice);
-      proxyDevice->SetControlHandler(proxyDevice);
 
       plugin->AddDevice(std::move(proxyDevice));
 

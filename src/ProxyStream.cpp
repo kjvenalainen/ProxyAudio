@@ -53,11 +53,50 @@ ProxyStream::ProxyStream(const AudioObjectID targetObjectID,
     : ProxyObject<ProxyStream>(targetObjectID,
                                context,
                                parentDevice,
-                               GetParameters(targetObjectID, context)) {
+                               GetParameters(targetObjectID, context)),
+      latencyProxy_(
+          targetObjectID,
+          context,
+          StreamLatencyAddress,
+          [this](const UInt32& value) {
+            const auto status = this->SetLatencyAsync(value);
+            if (status != noErr) {
+              ProxyAudio::Tracer::FromTracer(this->GetContext()->Tracer)
+                  ->Message(
+                      ProxyAudio::Tracer::Error,
+                      "ProxyStream:latencyProxy_() Failed to set latency: %s",
+                      status);
+            }
+          },
+          [this]() { return this->GetLatency(); }),
+      formatProxy_(
+          targetObjectID,
+          context,
+          StreamFormatAddress,
+          [this](const AudioStreamBasicDescription& value) {
+            ProxyAudio::Tracer::FromTracer(this->GetContext()->Tracer)
+                ->Message(
+                    ProxyAudio::Tracer::Info,
+                    "ProxyStream:formatProxy_() Setting physical format: %s",
+                    ToString(value).c_str());
+
+            const auto status = this->SetPhysicalFormatAsync(value);
+            if (status != noErr) {
+              ProxyAudio::Tracer::FromTracer(this->GetContext()->Tracer)
+                  ->Message(ProxyAudio::Tracer::Error,
+                            "ProxyStream:formatProxy_() Failed to set physical "
+                            "format: %s",
+                            status);
+            }
+          },
+          [this]() { return this->GetPhysicalFormat(); }) {
   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
       ->Message(ProxyAudio::Tracer::Info,
                 "ProxyStream:ProxyStream() Creating proxy for object: %u",
                 targetObjectID);
+
+  SetLatencyAsync(latencyProxy_.GetValue());
+  SetPhysicalFormatAsync(formatProxy_.GetValue());
 }
 
 }  // namespace ProxyAudio
