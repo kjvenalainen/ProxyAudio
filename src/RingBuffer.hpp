@@ -64,6 +64,23 @@ class RingBuffer {
     return count;
   }
 
+  // Discard values from the read side of the buffer without copying them out.
+  // Returns the number of values actually skipped (may be less than count if
+  // the buffer doesn't contain enough data). Only the consumer should call
+  // this method.
+  size_t Skip(size_t count) {
+    const auto readIdx = readIdx_.load(std::memory_order_relaxed);
+    const auto writeIdx = writeIdx_.load(std::memory_order_acquire);
+    const size_t size = buffer_.size();
+    const size_t stored = (writeIdx - readIdx + size) % size;
+    count = std::min(count, stored);
+    if (count == 0) {
+      return 0;
+    }
+    readIdx_.store((readIdx + count) % size, std::memory_order_release);
+    return count;
+  }
+
   // Read an array of values from the buffer into the provided array. Returns
   // the number of values actually read (may be less than count if the buffer
   // doesn't contain enough data).
@@ -89,6 +106,13 @@ class RingBuffer {
 
     readIdx_.store((readIdx + count) % size, std::memory_order_release);
     return count;
+  }
+
+  // Reset the buffer to the empty state. NOT thread-safe with concurrent
+  // reads or writes -- only call when no other thread is accessing the buffer.
+  void Reset() {
+    writeIdx_.store(0, std::memory_order_relaxed);
+    readIdx_.store(0, std::memory_order_relaxed);
   }
 
  private:

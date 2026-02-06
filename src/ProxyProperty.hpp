@@ -71,7 +71,15 @@ class ProxyProperty {
   }
   ProxyProperty& operator=(ProxyProperty&& other) noexcept = delete;
 
-  virtual ~ProxyProperty() { UnregisterPropertyChangeCallback(); }
+  virtual ~ProxyProperty() {
+    // Must not throw from a destructor (implicitly noexcept in C++11+).
+    try {
+      UnregisterPropertyChangeCallback();
+    } catch (...) {
+      // Best-effort: the listener may already have been removed if the
+      // target device was reconfigured underneath us.
+    }
+  }
 
   // Get the current value of the property from the target object.
   const ValueType GetValue() const {

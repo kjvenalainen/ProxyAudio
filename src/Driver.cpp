@@ -87,35 +87,6 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
   // You can provide custom tracer here.
   auto context = std::make_shared<aspl::Context>(tracer);
 
-  AudioObjectID targetDeviceId = kAudioObjectUnknown;
-  try {
-    auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context);
-    tracer->Message(ProxyAudio::Tracer::Info,
-                    "CreateProxyAudioDriver:Found %zu output devices",
-                    outputDevices.size());
-
-    for (auto deviceID : outputDevices) {
-      auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
-      tracer->Message(ProxyAudio::Tracer::Info,
-                      "CreateProxyAudioDriver:Output device: %u - %s", deviceID,
-                      deviceName.c_str());
-
-      if (deviceName == "MacBook Pro Speakers") {
-        tracer->Message(ProxyAudio::Tracer::Info,
-                        "CreateProxyAudioDriver:Found target device: %u - %s",
-                        deviceID, deviceName.c_str());
-        targetDeviceId = deviceID;
-      }
-    }
-
-  } catch (const ProxyAudio::OSStatusError& e) {
-    tracer->Message(
-        ProxyAudio::Tracer::Info,
-        "CreateProxyAudioDriver:Failed to enumerate output devices: %s",
-        e.what());
-    return nullptr;
-  }
-
   // Create plugin object, the root of the object hierarchy, and add
   // our device to it.
   //
@@ -124,40 +95,30 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
   // For simplicity we use default parameters.
   auto plugin = std::make_shared<aspl::Plugin>(context);
 
-  if (targetDeviceId != kAudioObjectUnknown) {
-    try {
-      auto deviceTree = ProxyAudio::DumpDeviceTree(targetDeviceId);
-      ProxyAudio::Tracer::FromTracer(context->Tracer)
-          ->Message(ProxyAudio::Tracer::Info,
-                    "CreateProxyAudioDriver:Device tree:\n%s",
-                    deviceTree.c_str());
+  try {
+    auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context);
+    tracer->Message(ProxyAudio::Tracer::Info,
+                    "CreateProxyAudioDriver:Found %zu output devices",
+                    outputDevices.size());
 
-      ProxyAudio::Tracer::FromTracer(context->Tracer)
-          ->Message(
-              ProxyAudio::Tracer::Info,
-              "CreateProxyAudioDriver:Creating proxy device for target device: "
-              "%u",
-              targetDeviceId);
+    for (auto deviceID : outputDevices) {
+      auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
+      auto deviceTree = ProxyAudio::DumpDeviceTree(deviceID);
+      tracer->Message(ProxyAudio::Tracer::Info,
+                      "CreateProxyAudioDriver:Output device: %u - %s \n%s",
+                      deviceID, deviceName.c_str(), deviceTree.c_str());
 
-      // TODO: Fold all of this device setup into a factory function.
-      auto proxyDevice =
-          std::make_shared<ProxyAudio::ProxyDevice>(targetDeviceId, context);
-      proxyDevice->AddProxyStreams();
-
-      plugin->AddDevice(std::move(proxyDevice));
-
-      ProxyAudio::Tracer::FromTracer(context->Tracer)
-          ->Message(ProxyAudio::Tracer::Info,
-                    "CreateProxyAudioDriver:Created proxy device for target "
-                    "device: %u",
-                    targetDeviceId);
-    } catch (const ProxyAudio::OSStatusError& e) {
-      // We already logged the error, so just continue with no device.
-      ProxyAudio::Tracer::FromTracer(context->Tracer)
-          ->Message(ProxyAudio::Tracer::Warn,
-                    "CreateProxyAudioDriver:Failed to create proxy device: %s",
-                    e.what());
+      if (deviceName == "MacBook Pro Speakers" ||
+          deviceName == "Scarlett 4i4 USB") {
+        auto proxyDevice = ProxyAudio::ProxyDevice::Create(deviceID, context);
+        plugin->AddDevice(std::move(proxyDevice));
+      }
     }
+  } catch (const ProxyAudio::OSStatusError& e) {
+    tracer->Message(
+        ProxyAudio::Tracer::Info,
+        "CreateProxyAudioDriver:Failed to enumerate output devices: %s",
+        e.what());
   }
 
   // Create driver, the top-level entry point.
