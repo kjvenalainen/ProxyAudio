@@ -19,6 +19,7 @@
 #include "ProxyVolumeControl.hpp"
 #include "Tracer.hpp"
 #include "Utils.hpp"
+#include "aspl/VolumeControl.hpp"
 
 namespace ProxyAudio {
 
@@ -258,6 +259,23 @@ void ProxyDevice::AddProxyStreams() {
 
       AddVolumeControlAsync(volume);
       stream->AttachVolumeControl(std::move(volume));
+    } else {
+      // Stream does not have a volume control, so we add a virtual one.
+      ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+          ->Message(
+              ProxyAudio::Tracer::Info,
+              "ProxyDevice:ProxyDevice() Adding virtual volume control for "
+              "stream: %u",
+              streamID);
+
+      // TODO: Remember the last volume value if we're recreating a device that
+      // has previously existed.
+      auto volume = std::make_shared<aspl::VolumeControl>(
+          GetContext(), aspl::VolumeControlParameters{
+                            .Scope = kAudioObjectPropertyScopeOutput,
+                        });
+      AddVolumeControlAsync(volume);
+      stream->AttachVolumeControl(std::move(volume));
     }
 
     const auto muteControlId = GetControlId(
@@ -271,7 +289,21 @@ void ProxyDevice::AddProxyStreams() {
 
       auto mute =
           std::make_shared<ProxyMuteControl>(muteControlId, GetContext());
+      AddMuteControlAsync(mute);
+      stream->AttachMuteControl(std::move(mute));
+    } else {
+      // Stream does not have a mute control, so we add a virtual one.
+      ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+          ->Message(ProxyAudio::Tracer::Info,
+                    "ProxyDevice:ProxyDevice() Adding virtual mute control for "
+                    "stream: %u",
+                    streamID);
 
+      // TODO: Load last mute state from storage.
+      auto mute = std::make_shared<aspl::MuteControl>(
+          GetContext(), aspl::MuteControlParameters{
+                            .Scope = kAudioObjectPropertyScopeOutput,
+                        });
       AddMuteControlAsync(mute);
       stream->AttachMuteControl(std::move(mute));
     }
