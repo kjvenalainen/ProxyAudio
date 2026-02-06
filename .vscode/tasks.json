@@ -5,7 +5,7 @@
       "label": "Build (Release)",
       "type": "shell",
       "command": "make",
-      "args": ["all"],
+      "args": ["release"],
       "group": {
         "kind": "build",
         "isDefault": true
@@ -20,47 +20,11 @@
       "label": "Build (Debug)",
       "type": "shell",
       "command": "make",
-      "args": ["debug_build"],
+      "args": ["debug"],
       "group": "build",
       "problemMatcher": ["$gcc"],
       "presentation": {
         "reveal": "silent",
-        "panel": "shared"
-      }
-    },
-    {
-      "label": "Build ProxyAudio (Release)",
-      "type": "shell",
-      "command": "make",
-      "args": ["proxyaudio_release_build"],
-      "group": "build",
-      "problemMatcher": ["$gcc"],
-      "presentation": {
-        "reveal": "silent",
-        "panel": "shared"
-      }
-    },
-    {
-      "label": "Build ProxyAudio (Debug)",
-      "type": "shell",
-      "command": "make",
-      "args": ["proxyaudio_debug_build"],
-      "group": "build",
-      "problemMatcher": ["$gcc"],
-      "presentation": {
-        "reveal": "silent",
-        "panel": "shared"
-      }
-    },
-    {
-      "label": "Test",
-      "type": "shell",
-      "command": "make",
-      "args": ["test"],
-      "group": "test",
-      "problemMatcher": ["$gcc"],
-      "presentation": {
-        "reveal": "always",
         "panel": "shared"
       }
     },
@@ -77,14 +41,14 @@
       }
     },
     {
-      "label": "Clean ProxyAudio",
+      "label": "Install",
       "type": "shell",
       "command": "make",
-      "args": ["proxyaudio_clean"],
+      "args": ["install"],
       "group": "build",
       "problemMatcher": [],
       "presentation": {
-        "reveal": "silent",
+        "reveal": "always",
         "panel": "shared"
       }
     },
@@ -97,30 +61,6 @@
       "problemMatcher": [],
       "presentation": {
         "reveal": "silent",
-        "panel": "shared"
-      }
-    },
-    {
-      "label": "Generate compile_commands.json",
-      "type": "shell",
-      "command": "make",
-      "args": ["compile_commands"],
-      "group": "build",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "silent",
-        "panel": "shared"
-      }
-    },
-    {
-      "label": "Install",
-      "type": "shell",
-      "command": "make",
-      "args": ["install"],
-      "group": "build",
-      "problemMatcher": ["$gcc"],
-      "presentation": {
-        "reveal": "always",
         "panel": "shared"
       }
     }

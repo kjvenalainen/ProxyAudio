@@ -6,7 +6,6 @@
 #include "CommonProperties.hpp"
 #include "Error.hpp"
 #include "Tracer.hpp"
-#include "Utils.hpp"
 
 namespace ProxyAudio {
 

@@ -28,7 +28,7 @@ if [[ ! -d "$BUILD_DIR" ]]; then
 fi
 
 # Check if the target build products exist
-BUILD_PRODUCTS_DIR="$BUILD_DIR/$BUILD_TYPE/ProxyAudio.driver"
+BUILD_PRODUCTS_DIR="$BUILD_DIR/ProxyAudio/$BUILD_TYPE/ProxyAudio.driver"
 if [[ ! -d "$BUILD_PRODUCTS_DIR" ]]; then
     echo "Error: Build products do not exist: $BUILD_PRODUCTS_DIR"
     echo "Please build the project first with configuration: $BUILD_TYPE"
@@ -48,7 +48,7 @@ elif [[ -e "$SYMLINK_PATH" ]]; then
 fi
 
 # Create new symlink
-ln -sf "$BUILD_TYPE/ProxyAudio.driver" "$SYMLINK_PATH"
+ln -sf "ProxyAudio/$BUILD_TYPE/ProxyAudio.driver" "$SYMLINK_PATH"
 
-echo "Created symlink: build/latest -> build/$BUILD_TYPE/ProxyAudio.driver"
+echo "Created symlink: build/latest -> build/ProxyAudio/$BUILD_TYPE/ProxyAudio.driver"
 echo "Latest build products now point to: $BUILD_TYPE"

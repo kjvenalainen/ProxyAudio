@@ -6,8 +6,7 @@
 namespace ProxyAudio {
 
 void DispatchAsync(dispatch_block_t block) {
-  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
-                 block);
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), block);
 }
 
 }  // namespace ProxyAudio

@@ -12,7 +12,6 @@
 #include <memory>
 
 #include "ProxyObject.hpp"
-#include "ProxyProperty.hpp"
 
 namespace ProxyAudio {
 

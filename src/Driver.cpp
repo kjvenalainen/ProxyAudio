@@ -105,17 +105,17 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver() {
   return driver;
 }
 
-} // namespace
+}  // namespace
 
-extern "C" void* ProxyAudioEntryPoint(CFAllocatorRef allocator, CFUUIDRef typeUUID)
-{
-    // The UUID of the plug-in type (443ABAB8-E7B3-491A-B985-BEB9187030DB).
-    if (!CFEqual(typeUUID, kAudioServerPlugInTypeUUID)) {
-        return nullptr;
-    }
+extern "C" void* ProxyAudioEntryPoint(CFAllocatorRef allocator,
+                                      CFUUIDRef typeUUID) {
+  // The UUID of the plug-in type (443ABAB8-E7B3-491A-B985-BEB9187030DB).
+  if (!CFEqual(typeUUID, kAudioServerPlugInTypeUUID)) {
+    return nullptr;
+  }
 
-    // Store shared pointer to the driver to keep it alive.
-    static std::shared_ptr<aspl::Driver> driver = CreateProxyAudioDriver();
+  // Store shared pointer to the driver to keep it alive.
+  static std::shared_ptr<aspl::Driver> driver = CreateProxyAudioDriver();
 
-    return driver->GetReference();
+  return driver->GetReference();
 }

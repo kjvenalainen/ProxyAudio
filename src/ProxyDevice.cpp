@@ -397,8 +397,7 @@ OSStatus ProxyDevice::OnStartIO() {
   Float32 silence[1024] = {};
   size_t remaining = preFillSamples;
   while (remaining > 0) {
-    const size_t chunk =
-        std::min(remaining, sizeof(silence) / sizeof(Float32));
+    const size_t chunk = std::min(remaining, sizeof(silence) / sizeof(Float32));
     ringBuffer_->Write(silence, chunk);
     remaining -= chunk;
   }
@@ -411,8 +410,8 @@ OSStatus ProxyDevice::OnStartIO() {
                   format.mSampleRate);
 
   // Register an IOProc on the target hardware device.
-  OSStatus status = AudioDeviceCreateIOProcID(GetTargetObjectID(),
-                                              TargetIOProc, this, &ioProcID_);
+  OSStatus status = AudioDeviceCreateIOProcID(GetTargetObjectID(), TargetIOProc,
+                                              this, &ioProcID_);
   if (status != noErr) {
     tracer->Message(
         Tracer::Error,
@@ -640,11 +639,10 @@ void ProxyDevice::PerformSampleRateChange(const Float64& value) {
         kAudioDevicePropertyStreams,
     });
   } catch (const OSStatusError& e) {
-    tracer->Message(
-        ProxyAudio::Tracer::Error,
-        "ProxyDevice:PerformSampleRateChange() Failed during "
-        "reconfiguration: %s — device may be in a degraded state",
-        e.what());
+    tracer->Message(ProxyAudio::Tracer::Error,
+                    "ProxyDevice:PerformSampleRateChange() Failed during "
+                    "reconfiguration: %s — device may be in a degraded state",
+                    e.what());
   } catch (const std::exception& e) {
     tracer->Message(ProxyAudio::Tracer::Error,
                     "ProxyDevice:PerformSampleRateChange() Unexpected "
