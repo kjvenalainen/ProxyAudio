@@ -3,6 +3,9 @@
 
 #include "Utils.hpp"
 
+#include "AudioObjectUtils.hpp"
+#include "CommonProperties.hpp"
+
 namespace ProxyAudio {
 
 std::vector<AudioObjectID> EnumerateAudioOutputDevices(

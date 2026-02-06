@@ -87,8 +87,16 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
 
     aspl::DeviceParameters parameters{
         .Name = GetDeviceNameProperty(targetDeviceID) + " (Proxy)",
-        .DeviceUID = GetDeviceUIDProperty(targetDeviceID) + "_proxy",
-        .ModelUID = GetDeviceModelUIDProperty(targetDeviceID) + "_proxy",
+        .DeviceUID = SafeValueOr<std::string>(
+            [targetDeviceID]() {
+              return GetDeviceUIDProperty(targetDeviceID) + "_proxy";
+            },
+            "", ProxyAudio::Tracer::FromTracer(context->Tracer).get()),
+        .ModelUID = SafeValueOr<std::string>(
+            [targetDeviceID]() {
+              return GetDeviceModelUIDProperty(targetDeviceID) + "_proxy";
+            },
+            "", ProxyAudio::Tracer::FromTracer(context->Tracer).get()),
         .CanBeDefault = GetDeviceCanBeDefaultProperty(targetDeviceID),
         .CanBeDefaultForSystemSounds =
             GetDeviceCanBeDefaultForSystemSoundsProperty(targetDeviceID),
@@ -196,15 +204,6 @@ ProxyDevice::~ProxyDevice() {
 }
 
 void ProxyDevice::AddProxyStreams() {
-  auto inputStreams = ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
-      GetTargetObjectID(),
-      {
-          .mSelector = kAudioDevicePropertyStreams,
-          .mScope = kAudioObjectPropertyScopeInput,
-          .mElement = kAudioObjectPropertyElementMain,
-      },
-      {});
-
   auto outputStreams = ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
       GetTargetObjectID(),
       {
@@ -218,25 +217,15 @@ void ProxyDevice::AddProxyStreams() {
       GetTargetObjectID(),
       {
           .mSelector = kAudioObjectPropertyControlList,
-          .mScope = kAudioObjectPropertyScopeInput,
+          .mScope = kAudioObjectPropertyScopeOutput,
           .mElement = kAudioObjectPropertyElementMain,
       },
       {});
 
   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
       ->Message(ProxyAudio::Tracer::Info,
-                "ProxyDevice:ProxyDevice() Cloning %lu input and %lu "
-                "output "
-                "streams.",
-                inputStreams.size(), outputStreams.size());
-
-  for (auto streamID : inputStreams) {
-    auto stream = std::make_shared<ProxyStream>(
-        streamID, GetContext(),
-        std::static_pointer_cast<aspl::Device>(shared_from_this()));
-
-    AddStreamAsync(std::move(stream));
-  }
+                "ProxyDevice:ProxyDevice() Cloning %lu output streams.",
+                outputStreams.size());
 
   for (auto streamID : outputStreams) {
     auto stream = std::make_shared<ProxyStream>(
@@ -250,7 +239,7 @@ void ProxyDevice::AddProxyStreams() {
     if (volumeControlId != kAudioObjectUnknown) {
       ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
           ->Message(ProxyAudio::Tracer::Info,
-                    "ProxyDevice:ProxyDevice() Cloning volume control for "
+                    "ProxyDevice:ProxyDevice() Proxying volume control for "
                     "stream: %u",
                     streamID);
 
@@ -556,15 +545,6 @@ void ProxyDevice::OnWriteMixedOutput(
   const auto* samples = static_cast<const Float32*>(bytes);
   const size_t sampleCount = bytesCount / sizeof(Float32);
 
-  static size_t log = 0;
-  if (log++ % 100 == 0) {
-    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
-        ->Message(ProxyAudio::Tracer::Info,
-                  "ProxyDevice::OnWriteMixedOutput() Writing %zu samples, "
-                  "ringbuffer count: %zu",
-                  sampleCount, ringBuffer_->GetCount());
-  }
-
   // Write as much as possible into the ring buffer.  The adaptive clock in
   // GetZeroTimeStampImpl steers the HAL's write rate to keep the buffer near
   // 50 % full, so overflow should be extremely rare.  If it does occur the
@@ -603,16 +583,6 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
     auto& buf = outOutputData->mBuffers[i];
     auto* dest = static_cast<Float32*>(buf.mData);
     const UInt32 samplesNeeded = buf.mDataByteSize / sizeof(Float32);
-
-    static size_t log = 0;
-    if (log++ % 100 == 0) {
-      ProxyAudio::Tracer::FromTracer(self->GetContext()->Tracer)
-          ->Message(
-              ProxyAudio::Tracer::Info,
-              "ProxyDevice::TargetIOProc() Reading %u samples, ring buffer "
-              "count: %zu",
-              samplesNeeded, self->ringBuffer_->GetCount());
-    }
 
     const size_t samplesRead = self->ringBuffer_->Read(dest, samplesNeeded);
 

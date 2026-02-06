@@ -56,25 +56,42 @@ class DriverHandler : public aspl::DriverRequestHandler {
                       outputDevices.size());
 
       for (auto deviceID : outputDevices) {
-        auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
-        auto deviceTree = ProxyAudio::DumpDeviceTree(deviceID);
-        tracer->Message(
-            ProxyAudio::Tracer::Info,
-            "DriverHandler:OnInitialize(): Output device: %u - %s \n%s",
-            deviceID, deviceName.c_str(), deviceTree.c_str());
+        try {
+          auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
+          auto deviceTree = ProxyAudio::DumpDeviceTree(deviceID);
+          tracer->Message(
+              ProxyAudio::Tracer::Info,
+              "DriverHandler:OnInitialize(): Output device: %u - %s \n%s",
+              deviceID, deviceName.c_str(), deviceTree.c_str());
 
-        if (deviceName == "MacBook Pro Speakers" ||
-            deviceName == "Scarlett 4i4 USB") {
-          auto proxyDevice =
-              ProxyAudio::ProxyDevice::Create(deviceID, context_);
-          plugin_->AddDevice(std::move(proxyDevice));
-          addedDevices = true;
+          // Add all devices that have at least one output stream.
+          auto outputStreamCount =
+              ProxyAudio::GetPropertyDataSize(
+                  deviceID,
+                  {
+                      .mSelector = kAudioDevicePropertyStreams,
+                      .mScope = kAudioObjectPropertyScopeOutput,
+                      .mElement = kAudioObjectPropertyElementMain,
+                  },
+                  {}) /
+              sizeof(AudioObjectID);
+
+          if (outputStreamCount > 0) {
+            auto proxyDevice =
+                ProxyAudio::ProxyDevice::Create(deviceID, context_);
+            plugin_->AddDevice(std::move(proxyDevice));
+            addedDevices = true;
+          }
+        } catch (const ProxyAudio::OSStatusError& e) {
+          tracer->Message(
+              ProxyAudio::Tracer::Warn,
+              "DriverHandler:OnInitialize(): Failed to add device %u: %s",
+              deviceID, e.what());
         }
       }
     } catch (const ProxyAudio::OSStatusError& e) {
-      tracer->Message(ProxyAudio::Tracer::Info,
-                      "DriverHandler:OnInitialize(): Failed to enumerate "
-                      "output devices: %s",
+      tracer->Message(ProxyAudio::Tracer::Error,
+                      "DriverHandler:OnInitialize(): Failed to add devices: %s",
                       e.what());
     }
   }

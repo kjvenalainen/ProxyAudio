@@ -6,17 +6,13 @@
 #include <CoreAudio/AudioHardwareBase.h>
 #include <MacTypes.h>
 
-#include <cstdint>
 #include <functional>
 #include <sstream>
 #include <vector>
 
-#include "AudioObjectUtils.hpp"
-#include "CFUtils.hpp"
-#include "CommonProperties.hpp"
+#include "Error.hpp"
 #include "Tracer.hpp"
 #include "aspl/Context.hpp"
-#include "aspl/Direction.hpp"
 
 namespace ProxyAudio {
 
@@ -41,5 +37,23 @@ void DumpControlInfo(std::stringstream& ss, AudioObjectID control);
 // kAudioObjectPropertyOwnedObjects. For each object get some basic info
 // about it and print the whole tree to a string.
 std::string DumpDeviceTree(AudioObjectID deviceId);
+
+// Get a value from a function, and if it throws an error, return a default
+// value.
+template <typename T>
+T SafeValueOr(std::function<T()> valueGetter,
+              T valueOr,
+              ProxyAudio::Tracer* tracer = nullptr) {
+  try {
+    return valueGetter();
+  } catch (const OSStatusError& e) {
+    if (tracer) {
+      tracer->Message(ProxyAudio::Tracer::Warn,
+                      "SafeValueOr: Failed to get value: %s", e.what());
+    }
+
+    return valueOr;
+  }
+}
 
 }  // namespace ProxyAudio
