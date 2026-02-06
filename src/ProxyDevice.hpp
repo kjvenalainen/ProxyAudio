@@ -66,7 +66,7 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
                        const AudioObjectID targetObjectID,
                        std::shared_ptr<const aspl::Context> context);
 
-  virtual ~ProxyDevice() = default;
+  virtual ~ProxyDevice();
 
   // ControlRequestHandler overrides -- manage target device IOProc lifecycle.
   OSStatus OnStartIO() override;

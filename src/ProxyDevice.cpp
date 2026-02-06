@@ -174,6 +174,26 @@ ProxyDevice::ProxyDevice(private_tag,
   SetNominalSampleRateAsync(sampleRateProxy_.GetValue());
 }
 
+ProxyDevice::~ProxyDevice() {
+  ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+      ->Message(ProxyAudio::Tracer::Info,
+                "ProxyDevice::~ProxyDevice() Destroying proxy for device: %u",
+                GetTargetObjectID());
+
+  // Signal both the producer and consumer to stop accessing the ring buffer.
+  targetIORunning_.store(false, std::memory_order_release);
+
+  if (ioProcID_ != nullptr) {
+    // AudioDeviceStop is synchronous -- after it returns the IOProc is
+    // guaranteed to no longer be executing.
+    AudioDeviceStop(GetTargetObjectID(), ioProcID_);
+    AudioDeviceDestroyIOProcID(GetTargetObjectID(), ioProcID_);
+    ioProcID_ = nullptr;
+  }
+
+  ringBuffer_.reset();
+}
+
 void ProxyDevice::AddProxyStreams() {
   auto inputStreams = ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
       GetTargetObjectID(),

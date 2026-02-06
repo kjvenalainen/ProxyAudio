@@ -54,6 +54,7 @@ ExternalProject_Add(${LIBASPL_TARGET}
 # - https://stackoverflow.com/a/2339910/3169754
 add_library(${DRIVER_NAME} MODULE
   "CommonProperties.cpp"
+  "Dispatch.cpp"
   "Driver.cpp"
   "ProxyDevice.cpp"
   "ProxyMuteControl.cpp"

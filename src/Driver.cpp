@@ -9,9 +9,9 @@
 // without including it)
 #include <aspl/Driver.hpp>
 #include <cmath>
-#include <limits>
 
 #include "CommonProperties.hpp"
+#include "Dispatch.hpp"
 #include "Error.hpp"
 #include "ProxyDevice.hpp"
 #include "Tracer.hpp"
@@ -28,104 +28,78 @@ constexpr UInt32 ChannelCount = 2;
 
 class DriverHandler : public aspl::DriverRequestHandler {
  public:
-  DriverHandler(std::shared_ptr<aspl::Context> context) : context_(context) {}
+  DriverHandler(std::shared_ptr<aspl::Context> context,
+                std::shared_ptr<aspl::Plugin> plugin)
+      : context_(context), plugin_(plugin) {}
 
   // Invoked when HAL performs asynchrnous initialization.
-  OSStatus OnInitialize() override { return kAudioHardwareNoError; }
+  OSStatus OnInitialize() override {
+    // Asynchronously add devices to the plugin. In this method the HAL is
+    // holding various locks that would cause a long delay if we were to do this
+    // synchronously.
+    ProxyAudio::DispatchAsync(^() {
+      AddDevices();
+    });
+
+    return kAudioHardwareNoError;
+  }
 
  private:
-  std::shared_ptr<aspl::Context> context_;
-};
+  void AddDevices() {
+    const auto tracer = ProxyAudio::Tracer::FromTracer(context_->Tracer);
 
-// Control and I/O request handler.
-class ProxyAudioHandler : public aspl::ControlRequestHandler, public aspl::IORequestHandler
-{
-public:
-    void OnReadClientInput(const std::shared_ptr<aspl::Client>& client,
-        const std::shared_ptr<aspl::Stream>& stream,
-        Float64 zeroTimestamp,
-        Float64 timestamp,
-        void* bytes,
-        UInt32 bytesCount) override
-    {
-        SInt16* samples = (SInt16*)bytes;
-        UInt32 numSamples = bytesCount / sizeof(SInt16) / ChannelCount;
+    try {
+      bool addedDevices = false;
+      auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context_);
+      tracer->Message(ProxyAudio::Tracer::Info,
+                      "DriverHandler:OnInitialize(): Found %zu output devices",
+                      outputDevices.size());
 
-        for (UInt32 n = 0; n < numSamples; n++) {
-            for (UInt32 c = 0; c < ChannelCount; c++) {
-                samples[n * ChannelCount + c] = ConvertSample(MakeSample(timestamp, n));
-            }
+      for (auto deviceID : outputDevices) {
+        auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
+        auto deviceTree = ProxyAudio::DumpDeviceTree(deviceID);
+        tracer->Message(
+            ProxyAudio::Tracer::Info,
+            "DriverHandler:OnInitialize(): Output device: %u - %s \n%s",
+            deviceID, deviceName.c_str(), deviceTree.c_str());
+
+        if (deviceName == "MacBook Pro Speakers" ||
+            deviceName == "Scarlett 4i4 USB") {
+          auto proxyDevice =
+              ProxyAudio::ProxyDevice::Create(deviceID, context_);
+          plugin_->AddDevice(std::move(proxyDevice));
+          addedDevices = true;
         }
+      }
+    } catch (const ProxyAudio::OSStatusError& e) {
+      tracer->Message(ProxyAudio::Tracer::Info,
+                      "DriverHandler:OnInitialize(): Failed to enumerate "
+                      "output devices: %s",
+                      e.what());
     }
+  }
 
-private:
-    double MakeSample(Float64 timestamp, UInt32 n)
-    {
-        return std::sin(2 * M_PI / SampleRate * SineFrequency * (timestamp + n));
-    }
-
-    SInt16 ConvertSample(double s)
-    {
-        constexpr SInt16 SInt16Min = std::numeric_limits<SInt16>::min();
-        constexpr SInt16 Sint16Max = std::numeric_limits<SInt16>::max();
-
-        s *= (Sint16Max + 1.0);
-
-        return s < SInt16Min          ? SInt16Min // clip
-               : s >= Sint16Max + 1.0 ? Sint16Max // clip
-                                      : SInt16(s);
-    }
+  std::shared_ptr<aspl::Context> context_;
+  std::shared_ptr<aspl::Plugin> plugin_;
 };
 
-std::shared_ptr<aspl::Driver> CreateProxyAudioDriver()
-{
+std::shared_ptr<aspl::Driver> CreateProxyAudioDriver() {
   auto tracer = std::make_shared<ProxyAudio::Tracer>(
       ProxyAudio::Tracer::Mode::Syslog, ProxyAudio::Tracer::Style::Hierarchical,
       ProxyAudio::Tracer::Level::Info);
 
   // Create context, shared between all other objects.
-  // You can provide custom tracer here.
   auto context = std::make_shared<aspl::Context>(tracer);
 
-  // Create plugin object, the root of the object hierarchy, and add
-  // our device to it.
-  //
-  // The main purpose of plugin is to provide the list of devices to HAL.
-  //
-  // For simplicity we use default parameters.
+  // Create plugin object, the root of the object hierarchy. Don't add any
+  // devices yet.
   auto plugin = std::make_shared<aspl::Plugin>(context);
-
-  try {
-    auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context);
-    tracer->Message(ProxyAudio::Tracer::Info,
-                    "CreateProxyAudioDriver:Found %zu output devices",
-                    outputDevices.size());
-
-    for (auto deviceID : outputDevices) {
-      auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
-      auto deviceTree = ProxyAudio::DumpDeviceTree(deviceID);
-      tracer->Message(ProxyAudio::Tracer::Info,
-                      "CreateProxyAudioDriver:Output device: %u - %s \n%s",
-                      deviceID, deviceName.c_str(), deviceTree.c_str());
-
-      if (deviceName == "MacBook Pro Speakers" ||
-          deviceName == "Scarlett 4i4 USB") {
-        auto proxyDevice = ProxyAudio::ProxyDevice::Create(deviceID, context);
-        plugin->AddDevice(std::move(proxyDevice));
-      }
-    }
-  } catch (const ProxyAudio::OSStatusError& e) {
-    tracer->Message(
-        ProxyAudio::Tracer::Info,
-        "CreateProxyAudioDriver:Failed to enumerate output devices: %s",
-        e.what());
-  }
 
   // Create driver, the top-level entry point.
   // Driver owns plugin object and thus the whole object hierarchy,
   // and provides C interface for HAL.
   auto driver = std::make_shared<aspl::Driver>(context, plugin);
-  auto driverHandler = std::make_shared<DriverHandler>(context);
+  auto driverHandler = std::make_shared<DriverHandler>(context, plugin);
   driver->SetDriverHandler(std::move(driverHandler));
 
   return driver;
