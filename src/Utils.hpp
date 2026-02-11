@@ -16,6 +16,9 @@
 
 namespace ProxyAudio {
 
+// Well known suffix for proxy devices (UID and ModelUID)
+static constexpr const char* PROXY_DEVICE_SUFFIX = "_PA_Proxy";
+
 std::vector<AudioObjectID> EnumerateAudioOutputDevices(
     std::shared_ptr<aspl::Context> context);
 

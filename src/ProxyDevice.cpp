@@ -85,18 +85,27 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
 
     const auto latencyWithBuffer = latency + kRingBufferFrameCount;
 
+    const auto deviceName = GetDeviceNameProperty(targetDeviceID);
+    const auto deviceNameHash =
+        std::to_string(std::hash<std::string>()(deviceName));
+
     aspl::DeviceParameters parameters{
-        .Name = GetDeviceNameProperty(targetDeviceID) + " (Proxy)",
-        .DeviceUID = SafeValueOr<std::string>(
-            [targetDeviceID]() {
-              return GetDeviceUIDProperty(targetDeviceID) + "_proxy";
-            },
-            "", ProxyAudio::Tracer::FromTracer(context->Tracer).get()),
+        .Name = deviceName + " (Proxy)",
+        .DeviceUID =
+            SafeValueOr<std::string>(
+                [targetDeviceID]() {
+                  return GetDeviceUIDProperty(targetDeviceID);
+                },
+                deviceNameHash,
+                ProxyAudio::Tracer::FromTracer(context->Tracer).get()) +
+            PROXY_DEVICE_SUFFIX,
         .ModelUID = SafeValueOr<std::string>(
-            [targetDeviceID]() {
-              return GetDeviceModelUIDProperty(targetDeviceID) + "_proxy";
-            },
-            "", ProxyAudio::Tracer::FromTracer(context->Tracer).get()),
+                        [targetDeviceID]() {
+                          return GetDeviceModelUIDProperty(targetDeviceID);
+                        },
+                        deviceNameHash,
+                        ProxyAudio::Tracer::FromTracer(context->Tracer).get()) +
+                    PROXY_DEVICE_SUFFIX,
         .CanBeDefault = GetDeviceCanBeDefaultProperty(targetDeviceID),
         .CanBeDefaultForSystemSounds =
             GetDeviceCanBeDefaultForSystemSoundsProperty(targetDeviceID),

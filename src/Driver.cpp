@@ -48,15 +48,46 @@ class DriverHandler : public aspl::DriverRequestHandler {
   void AddDevices() {
     const auto tracer = ProxyAudio::Tracer::FromTracer(context_->Tracer);
 
+    // Note all of our current proxy devices.
+    const auto proxyDeviceCount = plugin_->GetDeviceCount();
+    // (targetDeviceID, deviceUID)
+    std::vector<std::shared_ptr<ProxyAudio::ProxyDevice>> proxyDevices(
+        proxyDeviceCount);
+    for (auto i = 0; i < proxyDeviceCount; i++) {
+      proxyDevices[i] = std::static_pointer_cast<ProxyAudio::ProxyDevice>(
+          plugin_->GetDeviceByIndex(i));
+    }
+
     try {
       bool addedDevices = false;
-      auto outputDevices = ProxyAudio::EnumerateAudioOutputDevices(context_);
+      auto systemOutputDevices =
+          ProxyAudio::EnumerateAudioOutputDevices(context_);
       tracer->Message(ProxyAudio::Tracer::Info,
                       "DriverHandler:OnInitialize(): Found %zu output devices",
-                      outputDevices.size());
+                      systemOutputDevices.size());
 
-      for (auto deviceID : outputDevices) {
+      // For any proxy device that no longer has a target device, remove it.
+      for (auto proxyDevice : proxyDevices) {
+        if (std::find(systemOutputDevices.begin(), systemOutputDevices.end(),
+                      proxyDevice->GetTargetObjectID()) ==
+            systemOutputDevices.end()) {
+          plugin_->RemoveDevice(proxyDevice);
+        }
+      }
+
+      for (auto deviceID : systemOutputDevices) {
         try {
+          // Skip proxy devices.
+          const auto deviceUID = ProxyAudio::SafeValueOr<std::string>(
+              [deviceID]() {
+                return ProxyAudio::GetDeviceUIDProperty(deviceID);
+              },
+              "", ProxyAudio::Tracer::FromTracer(context_->Tracer).get());
+          if (deviceUID.find(ProxyAudio::PROXY_DEVICE_SUFFIX) !=
+              std::string::npos) {
+            continue;
+          }
+
           auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
           auto deviceTree = ProxyAudio::DumpDeviceTree(deviceID);
           tracer->Message(
