@@ -182,4 +182,39 @@ class ProxyProperty {
   const GetterType getter_;
 };
 
+// ProxyProperty, with internal storage of the value.
+template <typename _ValueType>
+class ProxyPropertyWithStorage : public ProxyProperty<_ValueType> {
+ public:
+  using ValueType = _ValueType;
+
+  ProxyPropertyWithStorage() : ProxyProperty<ValueType>(), value_() {}
+
+  ProxyPropertyWithStorage(const AudioObjectID targetObjectID,
+                           std::shared_ptr<const aspl::Context> context,
+                           const AudioObjectPropertyAddress& address)
+      : ProxyProperty<ValueType>(
+            targetObjectID,
+            context,
+            address,
+            [this](const ValueType& value) { this->value_ = value; },
+            [this]() { return this->value_; }),
+        value_(this->GetValue()) {}
+
+  virtual ~ProxyPropertyWithStorage() = default;
+
+  // Get the current value of the property from the internal storage.
+  ValueType Get() const { return value_; }
+
+  // Set the current value of the property on the internal storage and the
+  // target object.
+  void Set(const ValueType& value) {
+    this->SetValue(value);
+    value_ = value;
+  }
+
+ protected:
+  ValueType value_;
+};
+
 }  // namespace ProxyAudio
