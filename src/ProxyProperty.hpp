@@ -23,7 +23,8 @@ namespace ProxyAudio {
 // ValueType defines the type of the property value.
 //
 // During instantiation you must provide
-// - void Set(const ValueType& value): Set the current value of the property.
+// - void Set(const ValueType& value): Set the current value of the
+// property.
 // - ValueType Get() const: Get the current value of the property.
 template <typename _ValueType>
 class ProxyProperty {
@@ -60,15 +61,7 @@ class ProxyProperty {
 
   ProxyProperty(const ProxyProperty& other) = delete;
   ProxyProperty& operator=(const ProxyProperty& other) = delete;
-  ProxyProperty(ProxyProperty&& other) noexcept
-      : targetObjectID_(std::move(other.targetObjectID_)),
-        context_(std::move(other.context_)),
-        address_(std::move(other.address_)),
-        setter_(std::move(other.setter_)),
-        getter_(std::move(other.getter_)) {
-    other(ProxyProperty());
-    RegisterPropertyChangeCallback();
-  }
+  ProxyProperty(ProxyProperty&& other) noexcept = delete;
   ProxyProperty& operator=(ProxyProperty&& other) noexcept = delete;
 
   virtual ~ProxyProperty() {

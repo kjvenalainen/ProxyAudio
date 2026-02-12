@@ -10,10 +10,13 @@
 #include <aspl/Driver.hpp>
 #include <cmath>
 
+#include "AudioObjectUtils.hpp"
 #include "CommonProperties.hpp"
 #include "Dispatch.hpp"
 #include "Error.hpp"
+#include "PropertyChangedNotifier.hpp"
 #include "ProxyDevice.hpp"
+#include "ProxyProperty.hpp"
 #include "Tracer.hpp"
 #include "Utils.hpp"
 
@@ -30,7 +33,7 @@ class DriverHandler : public aspl::DriverRequestHandler {
  public:
   DriverHandler(std::shared_ptr<aspl::Context> context,
                 std::shared_ptr<aspl::Plugin> plugin)
-      : context_(context), plugin_(plugin) {}
+      : context_(context), plugin_(plugin), onSystemAudioDevicesChanged_() {}
 
   // Invoked when HAL performs asynchrnous initialization.
   OSStatus OnInitialize() override {
@@ -39,6 +42,17 @@ class DriverHandler : public aspl::DriverRequestHandler {
     // synchronously.
     ProxyAudio::DispatchAsync(^() {
       AddDevices();
+
+      onSystemAudioDevicesChanged_ =
+          std::make_unique<ProxyAudio::PropertyChangedNotifier>(
+              kAudioObjectSystemObject, context_,
+              AudioObjectPropertyAddress{
+                  kAudioHardwarePropertyDevices,
+                  kAudioObjectPropertyScopeGlobal,
+                  kAudioObjectPropertyElementMain,
+              },
+              [this]() { this->AddDevices(); });
+      
     });
 
     return kAudioHardwareNoError;
@@ -95,7 +109,8 @@ class DriverHandler : public aspl::DriverRequestHandler {
               "DriverHandler:OnInitialize(): Output device: %u - %s \n%s",
               deviceID, deviceName.c_str(), deviceTree.c_str());
 
-          // Add all devices that have at least one output stream.
+          // Add all devices that have at least one output stream, and that
+          // don't have a volume+mute control.
           auto outputStreamCount =
               ProxyAudio::GetPropertyDataSize(
                   deviceID,
@@ -127,8 +142,42 @@ class DriverHandler : public aspl::DriverRequestHandler {
     }
   }
 
+  bool DeviceHasVolumeAndMuteControl(AudioObjectID deviceID) {
+    try {
+      const auto controls =
+          ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
+              deviceID,
+              {
+                  .mSelector = kAudioObjectPropertyControlList,
+                  .mScope = kAudioObjectPropertyScopeOutput,
+                  .mElement = kAudioObjectPropertyElementMain,
+              },
+              {});
+
+      bool hasVolumeControl =
+          ProxyAudio::GetControlId(kAudioVolumeControlClassID,
+                                   kAudioDevicePropertyScopeOutput,
+                                   controls) != kAudioObjectUnknown;
+      bool hasMuteControl =
+          ProxyAudio::GetControlId(kAudioMuteControlClassID,
+                                   kAudioDevicePropertyScopeOutput,
+                                   controls) != kAudioObjectUnknown;
+
+      return hasVolumeControl && hasMuteControl;
+    } catch (const ProxyAudio::OSStatusError& e) {
+      ProxyAudio::Tracer::FromTracer(context_->Tracer)
+          ->Message(ProxyAudio::Tracer::Error,
+                    "DriverHandler:DeviceHasVolumeAndMuteControl(): Failed to "
+                    "get controls: %s",
+                    e.what());
+      return false;
+    }
+  }
+
   std::shared_ptr<aspl::Context> context_;
   std::shared_ptr<aspl::Plugin> plugin_;
+  std::unique_ptr<ProxyAudio::PropertyChangedNotifier>
+      onSystemAudioDevicesChanged_;
 };
 
 std::shared_ptr<aspl::Driver> CreateProxyAudioDriver() {
