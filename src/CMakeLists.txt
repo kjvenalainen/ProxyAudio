@@ -61,6 +61,7 @@ add_library(${DRIVER_NAME} MODULE
   "ProxyStream.cpp"
   "ProxyVolumeControl.cpp"
   "Utils.cpp"
+  "VolumeControl.cpp"
 )
 
 # add libASPL dependency

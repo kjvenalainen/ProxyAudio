@@ -19,6 +19,7 @@
 #include "ProxyVolumeControl.hpp"
 #include "Tracer.hpp"
 #include "Utils.hpp"
+#include "VolumeControl.hpp"
 #include "aspl/VolumeControl.hpp"
 
 namespace ProxyAudio {
@@ -266,11 +267,12 @@ void ProxyDevice::AddProxyStreams() {
               "stream: %u",
               streamID);
 
-      // TODO: Remember the last volume value if we're recreating a device that
-      // has previously existed.
-      auto volume = std::make_shared<aspl::VolumeControl>(
-          GetContext(), aspl::VolumeControlParameters{
+      auto volume = std::make_shared<VolumeControl>(
+          GetContext(), VolumeControlParameters{
                             .Scope = kAudioObjectPropertyScopeOutput,
+                            .StorageKey = "VOLUME_" + GetDeviceUID() + "_" +
+                                          std::to_string(streamID),
+
                         });
       AddVolumeControlAsync(volume);
       stream->AttachVolumeControl(std::move(volume));

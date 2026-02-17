@@ -9,4 +9,9 @@ void DispatchAsync(dispatch_block_t block) {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), block);
 }
 
+void DispatchAfter(dispatch_block_t block, const DispatchTime& time) {
+  dispatch_after(time.Get(), dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0),
+                 block);
+}
+
 }  // namespace ProxyAudio
