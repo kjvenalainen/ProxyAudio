@@ -55,6 +55,28 @@ clean:
 install:
 	bash script/install.sh
 
+# Manager app
+APP_NAME = ProxyAudioManager
+APP_BUNDLE = build/$(APP_NAME).app
+APP_SOURCES = $(wildcard app/*.swift)
+SWIFTC_FLAGS = -sdk $(shell xcrun --show-sdk-path) \
+	-target $(shell uname -m)-apple-macos13.0 \
+	-framework SwiftUI -framework CoreAudio
+
+app: release
+	mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
+	mkdir -p "$(APP_BUNDLE)/Contents/Resources"
+	swiftc $(SWIFTC_FLAGS) -o "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)" $(APP_SOURCES)
+	cp app/Info.plist "$(APP_BUNDLE)/Contents/Info.plist"
+	cp -RL build/latest "$(APP_BUNDLE)/Contents/Resources/ProxyAudio.driver"
+ifneq ($(CODESIGN_ID),)
+	codesign --force --deep -s "$(CODESIGN_ID)" "$(APP_BUNDLE)"
+endif
+	@echo "Built $(APP_BUNDLE)"
+
+app-clean:
+	rm -rf "$(APP_BUNDLE)"
+
 # Code formatting
 fmt:
 	find . -type f -name '*.[ch]pp' -not -name '*.g.*' \
