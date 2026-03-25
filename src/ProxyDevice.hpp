@@ -68,6 +68,9 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
 
   virtual ~ProxyDevice();
 
+  // Get the version of the proxy device (IE driver version).
+  CFStringRef GetVersion() const;
+
   // ControlRequestHandler overrides -- manage target device IOProc lifecycle.
   OSStatus OnStartIO() override;
   void OnStopIO() override;

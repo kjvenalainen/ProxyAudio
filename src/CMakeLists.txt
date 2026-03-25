@@ -14,7 +14,7 @@ set(CODESIGN_ID "" CACHE STRING "Codesign ID")
 set(DRIVER_NAME "ProxyAudio")
 set(DRIVER_VERSION "1.0.0")
 set(DRIVER_COPYRIGHT "Copyright (c) Tap Turtle")
-set(DRIVER_IDENTIFIER "com.tap-turtle.proxy-audio")
+set(DRIVER_IDENTIFIER "com.TapTurtle.ProxyAudio")
 set(DRIVER_UID "443ABAB8-E7B3-491A-B985-BEB9187030DB")
 set(DRIVER_ENTRYPOINT "ProxyAudioEntryPoint")
 

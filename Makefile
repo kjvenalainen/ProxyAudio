@@ -55,6 +55,11 @@ clean:
 install:
 	bash script/install.sh
 
+# Uninstall
+.PHONY: uninstall
+uninstall:
+	bash script/uninstall.sh
+
 # Manager app
 APP_NAME = ProxyAudioManager
 APP_BUNDLE = build/$(APP_NAME).app
@@ -63,7 +68,8 @@ SWIFTC_FLAGS = -sdk $(shell xcrun --show-sdk-path) \
 	-target $(shell uname -m)-apple-macos13.0 \
 	-framework SwiftUI -framework CoreAudio
 
-app: release
+app:
+	@test -L build/latest || { echo "Error: build/latest not found. Run 'make release' or 'make debug' first."; exit 1; }
 	mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
 	mkdir -p "$(APP_BUNDLE)/Contents/Resources"
 	swiftc $(SWIFTC_FLAGS) -o "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)" $(APP_SOURCES)

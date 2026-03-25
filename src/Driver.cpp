@@ -9,6 +9,7 @@
 // without including it)
 #include <aspl/Driver.hpp>
 #include <cmath>
+#include <memory>
 
 #include "AudioObjectUtils.hpp"
 #include "CommonProperties.hpp"
@@ -41,7 +42,9 @@ class DriverHandler : public aspl::DriverRequestHandler {
     // holding various locks that would cause a long delay if we were to do this
     // synchronously.
     ProxyAudio::DispatchAsync(^() {
-      AddDevices();
+      static std::atomic<bool> isAddingDevices = true;
+      AddDevices(context_, plugin_);
+      isAddingDevices.store(false);
 
       onSystemAudioDevicesChanged_ =
           std::make_unique<ProxyAudio::PropertyChangedNotifier>(
@@ -51,41 +54,65 @@ class DriverHandler : public aspl::DriverRequestHandler {
                   kAudioObjectPropertyScopeGlobal,
                   kAudioObjectPropertyElementMain,
               },
-              [this]() { this->AddDevices(); });
-      
+              [context = context_, plugin = plugin_]() {
+                if (isAddingDevices.exchange(true)) {
+                  ProxyAudio::Tracer::FromTracer(context->Tracer)
+                      ->Message(ProxyAudio::Tracer::Info,
+                                "DriverHandler:AddDevices(): Other "
+                                "thread is already "
+                                "adding devices, skipping.");
+
+                  return;
+                }
+
+                ProxyAudio::DispatchAsync(^() {
+                  AddDevices(context, plugin);
+                  isAddingDevices.store(false);
+                });
+              });
     });
 
     return kAudioHardwareNoError;
   }
 
  private:
-  void AddDevices() {
-    const auto tracer = ProxyAudio::Tracer::FromTracer(context_->Tracer);
+  static void AddDevices(std::shared_ptr<aspl::Context> context,
+                         std::shared_ptr<aspl::Plugin> plugin) {
+    const auto& tracer = ProxyAudio::Tracer::FromTracer(context->Tracer);
 
     // Note all of our current proxy devices.
-    const auto proxyDeviceCount = plugin_->GetDeviceCount();
+    const auto proxyDeviceCount = plugin->GetDeviceCount();
     // (targetDeviceID, deviceUID)
     std::vector<std::shared_ptr<ProxyAudio::ProxyDevice>> proxyDevices(
         proxyDeviceCount);
     for (auto i = 0; i < proxyDeviceCount; i++) {
       proxyDevices[i] = std::static_pointer_cast<ProxyAudio::ProxyDevice>(
-          plugin_->GetDeviceByIndex(i));
+          plugin->GetDeviceByIndex(i));
     }
 
     try {
-      bool addedDevices = false;
+      // Track whether we need to notify HAL that the properties have changed.
+      bool changedDevices = false;
+
       auto systemOutputDevices =
-          ProxyAudio::EnumerateAudioOutputDevices(context_);
+          ProxyAudio::EnumerateAudioOutputDevices(context);
       tracer->Message(ProxyAudio::Tracer::Info,
-                      "DriverHandler:OnInitialize(): Found %zu output devices",
-                      systemOutputDevices.size());
+                      "DriverHandler:AddDevices(): Found %zu output devices, "
+                      "%zu current proxy devices",
+                      systemOutputDevices.size(), proxyDevices.size());
 
       // For any proxy device that no longer has a target device, remove it.
       for (auto proxyDevice : proxyDevices) {
         if (std::find(systemOutputDevices.begin(), systemOutputDevices.end(),
                       proxyDevice->GetTargetObjectID()) ==
             systemOutputDevices.end()) {
-          plugin_->RemoveDevice(proxyDevice);
+          tracer->Message(
+              ProxyAudio::Tracer::Info,
+              "DriverHandler:AddDevices(): Removing proxy device: %u",
+              proxyDevice->GetTargetObjectID());
+
+          plugin->RemoveDevice(proxyDevice, false);
+          changedDevices = true;
         }
       }
 
@@ -96,18 +123,36 @@ class DriverHandler : public aspl::DriverRequestHandler {
               [deviceID]() {
                 return ProxyAudio::GetDeviceUIDProperty(deviceID);
               },
-              "", ProxyAudio::Tracer::FromTracer(context_->Tracer).get());
+              "", ProxyAudio::Tracer::FromTracer(context->Tracer).get());
+          auto deviceName = ProxyAudio::SafeValueOr<std::string>(
+              [deviceID]() {
+                return ProxyAudio::GetDeviceNameProperty(deviceID);
+              },
+              "UNKNOWN", ProxyAudio::Tracer::FromTracer(context->Tracer).get());
           if (deviceUID.find(ProxyAudio::PROXY_DEVICE_SUFFIX) !=
               std::string::npos) {
+            tracer->Message(
+                ProxyAudio::Tracer::Info,
+                "DriverHandler:AddDevices(): Skipping proxy device: %u - %s",
+                deviceID, deviceName.c_str());
+
             continue;
           }
 
-          auto deviceName = ProxyAudio::GetDeviceNameProperty(deviceID);
-          auto deviceTree = ProxyAudio::DumpDeviceTree(deviceID);
-          tracer->Message(
-              ProxyAudio::Tracer::Info,
-              "DriverHandler:OnInitialize(): Output device: %u - %s \n%s",
-              deviceID, deviceName.c_str(), deviceTree.c_str());
+          // If a device already has a proxy device, skip it.
+          if (std::find_if(
+                  proxyDevices.begin(), proxyDevices.end(),
+                  [deviceID](const std::shared_ptr<ProxyAudio::ProxyDevice>&
+                                 proxyDevice) {
+                    return proxyDevice->GetTargetObjectID() == deviceID;
+                  }) != proxyDevices.end()) {
+            tracer->Message(
+                ProxyAudio::Tracer::Info,
+                "DriverHandler:AddDevices(): Skipping device: %u - %s",
+                deviceID, deviceName.c_str());
+
+            continue;
+          }
 
           // Add all devices that have at least one output stream, and that
           // don't have a volume+mute control.
@@ -123,26 +168,45 @@ class DriverHandler : public aspl::DriverRequestHandler {
               sizeof(AudioObjectID);
 
           if (outputStreamCount > 0) {
+            tracer->Message(
+                ProxyAudio::Tracer::Info,
+                "DriverHandler:AddDevices(): Adding output device: %u - %s",
+                deviceID, deviceName.c_str());
+
             auto proxyDevice =
-                ProxyAudio::ProxyDevice::Create(deviceID, context_);
-            plugin_->AddDevice(std::move(proxyDevice));
-            addedDevices = true;
+                ProxyAudio::ProxyDevice::Create(deviceID, context);
+
+            plugin->AddDevice(std::move(proxyDevice), false);
+            changedDevices = true;
           }
         } catch (const ProxyAudio::OSStatusError& e) {
           tracer->Message(
               ProxyAudio::Tracer::Warn,
-              "DriverHandler:OnInitialize(): Failed to add device %u: %s",
+              "DriverHandler:AddDevices(): Failed to add device %u: %s",
               deviceID, e.what());
+        } catch (...) {
+          tracer->Message(ProxyAudio::Tracer::Warn,
+                          "DriverHandler:AddDevices(): Generic exception "
+                          "failed to add device %u",
+                          deviceID);
         }
+      }
+
+      if (changedDevices) {
+        // Notify HAL only once for the changes.
+        plugin->NotifyPropertiesChanged(
+            {kAudioObjectPropertyOwnedObjects, kAudioPlugInPropertyDeviceList});
       }
     } catch (const ProxyAudio::OSStatusError& e) {
       tracer->Message(ProxyAudio::Tracer::Error,
-                      "DriverHandler:OnInitialize(): Failed to add devices: %s",
+                      "DriverHandler:AddDevices(): Failed to add devices: %s",
                       e.what());
     }
   }
 
-  bool DeviceHasVolumeAndMuteControl(AudioObjectID deviceID) {
+  static bool DeviceHasVolumeAndMuteControl(
+      AudioObjectID deviceID,
+      std::shared_ptr<aspl::Context> context) {
     try {
       const auto controls =
           ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
@@ -165,7 +229,7 @@ class DriverHandler : public aspl::DriverRequestHandler {
 
       return hasVolumeControl && hasMuteControl;
     } catch (const ProxyAudio::OSStatusError& e) {
-      ProxyAudio::Tracer::FromTracer(context_->Tracer)
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
           ->Message(ProxyAudio::Tracer::Error,
                     "DriverHandler:DeviceHasVolumeAndMuteControl(): Failed to "
                     "get controls: %s",

@@ -4,6 +4,7 @@
 #include "ProxyDevice.hpp"
 
 #include <CoreAudio/AudioHardware.h>
+#include <CoreFoundation/CFBundle.h>
 #include <MacTypes.h>
 #include <mach/mach_time.h>
 
@@ -181,7 +182,7 @@ ProxyDevice::ProxyDevice(private_tag,
                 "ProxyDevice:ProxyDevice() Available sample rates: %s",
                 ToString(availableSampleRates).c_str());
 
-  auto status = SetAvailableSampleRatesAsync(availableSampleRates);
+  auto status = SetAvailableSampleRatesImpl(availableSampleRates);
   if (status != noErr) {
     ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
         ->Message(ProxyAudio::Tracer::Error,
@@ -190,7 +191,17 @@ ProxyDevice::ProxyDevice(private_tag,
                   status);
   }
 
-  SetNominalSampleRateAsync(sampleRateProxy_.GetValue());
+  status = SetNominalSampleRateImpl(sampleRateProxy_.GetValue());
+  if (status != noErr) {
+    ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+        ->Message(ProxyAudio::Tracer::Error,
+                  "ProxyDevice:ProxyDevice() Failed to set nominal sample "
+                  "rate: %s",
+                  status);
+  }
+
+  RegisterCustomProperty(kAudioObjectPropertyFirmwareVersion, *this,
+                         &ProxyDevice::GetVersion);
 }
 
 ProxyDevice::~ProxyDevice() {
@@ -211,6 +222,14 @@ ProxyDevice::~ProxyDevice() {
   }
 
   ringBuffer_.reset();
+}
+
+CFStringRef ProxyDevice::GetVersion() const {
+  // Return CFBundleShortVersionString from info.plist.
+  CFStringRef version = CFBundleCopyLocalizedString(
+      CFBundleGetMainBundle(), CFSTR("CFBundleVersion"), CFSTR(""), nullptr);
+
+  return version;
 }
 
 void ProxyDevice::AddProxyStreams() {

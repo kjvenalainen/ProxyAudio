@@ -1,6 +1,34 @@
 #!/bin/bash
 # Script to apply patches to libASPL submodule
-# This is called by CMake during the build process
+# Called automatically by CMake during the build process (via PATCH_COMMAND)
+#
+# Usage:
+#   ./apply-patches.sh <submodule_dir> <patches_dir>
+#
+# Example (from project root):
+#   ./patches/apply-patches.sh libASPL patches/libASPL
+#
+# The script is idempotent — already-applied patches are skipped.
+#
+# Manual workflow:
+#
+#   Apply a single patch:
+#     cd libASPL
+#     git apply ../patches/libASPL/fix-something.patch
+#
+#   Check if a patch applies cleanly (dry run):
+#     cd libASPL
+#     git apply --check ../patches/libASPL/fix-something.patch
+#
+#   Revert all patches (restore submodule to upstream state):
+#     cd libASPL
+#     git checkout .
+#
+#   Generate a new patch after editing the submodule:
+#     cd libASPL
+#     # ... make your changes ...
+#     git diff > ../patches/libASPL/descriptive-name.patch
+#     git checkout .   # revert — the build will re-apply via this script
 
 set -e
 
