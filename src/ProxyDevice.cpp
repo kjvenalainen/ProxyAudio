@@ -137,10 +137,19 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
 std::shared_ptr<ProxyDevice> ProxyDevice::Create(
     const AudioObjectID targetObjectID,
     std::shared_ptr<const aspl::Context> context) {
-  auto proxyDevice =
-      std::make_shared<ProxyDevice>(private_tag(), targetObjectID, context);
-  proxyDevice->AddProxyStreams();
-  return proxyDevice;
+  try {
+    auto proxyDevice =
+        std::make_shared<ProxyDevice>(private_tag(), targetObjectID, context);
+    proxyDevice->AddProxyStreams();
+    return proxyDevice;
+  } catch (const OSStatusError& e) {
+    ProxyAudio::Tracer::FromTracer(context->Tracer)
+        ->Message(ProxyAudio::Tracer::Error,
+                  "ProxyDevice:Create() Failed to create proxy device: %s",
+                  e.what());
+
+    return nullptr;
+  }
 }
 
 ProxyDevice::ProxyDevice(private_tag,

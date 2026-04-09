@@ -9,6 +9,7 @@
 // without including it)
 #include <aspl/Driver.hpp>
 #include <cmath>
+#include <future>
 #include <memory>
 
 #include "AudioObjectUtils.hpp"
@@ -116,6 +117,7 @@ class DriverHandler : public aspl::DriverRequestHandler {
         }
       }
 
+      auto proxyTargetDevicesToAdd = std::vector<AudioObjectID>();
       for (auto deviceID : systemOutputDevices) {
         try {
           // Skip proxy devices.
@@ -173,11 +175,7 @@ class DriverHandler : public aspl::DriverRequestHandler {
                 "DriverHandler:AddDevices(): Adding output device: %u - %s",
                 deviceID, deviceName.c_str());
 
-            auto proxyDevice =
-                ProxyAudio::ProxyDevice::Create(deviceID, context);
-
-            plugin->AddDevice(std::move(proxyDevice), false);
-            changedDevices = true;
+            proxyTargetDevicesToAdd.push_back(deviceID);
           }
         } catch (const ProxyAudio::OSStatusError& e) {
           tracer->Message(
@@ -190,6 +188,28 @@ class DriverHandler : public aspl::DriverRequestHandler {
                           "failed to add device %u",
                           deviceID);
         }
+      }
+
+      if (!proxyTargetDevicesToAdd.empty()) {
+        // Dispatch creation of proxy devices one per thread in case any block.
+        std::vector<std::future<std::shared_ptr<ProxyAudio::ProxyDevice>>>
+            proxyDevicesFutures;
+        for (auto deviceID : proxyTargetDevicesToAdd) {
+          proxyDevicesFutures.push_back(
+              std::async(std::launch::async, ProxyAudio::ProxyDevice::Create,
+                         deviceID, context));
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        for (auto& future : proxyDevicesFutures) {
+          auto proxyDevice = future.get();
+          if (proxyDevice) {
+            plugin->AddDevice(std::move(proxyDevice), false);
+          }
+        }
+
+        changedDevices = true;
       }
 
       if (changedDevices) {
