@@ -169,7 +169,8 @@ class DriverHandler : public aspl::DriverRequestHandler {
                   {}) /
               sizeof(AudioObjectID);
 
-          if (outputStreamCount > 0) {
+          if (outputStreamCount > 0 &&
+              !DeviceHasVolumeAndMuteControl(deviceID, context)) {
             tracer->Message(
                 ProxyAudio::Tracer::Info,
                 "DriverHandler:AddDevices(): Adding output device: %u - %s",

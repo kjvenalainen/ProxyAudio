@@ -9,6 +9,8 @@
 #include <aspl/Context.hpp>
 #include <aspl/Device.hpp>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 
 #include "ProxyObject.hpp"
@@ -133,17 +135,71 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
   // Number of interleaved channels per frame for the current output format.
   UInt32 outputChannelsPerFrame_ = 0;
 
-  // --- Adaptive clock state (used by GetZeroTimeStampImpl) ----------------
+  // Number of frames of silence prebuffered into the ring at startup. Gives
+  // the consumer a constant cushion of audio already in flight so the HAL's
+  // per-cycle write jitter cannot immediately drain the buffer.
+  UInt32 prebufferFrames_ = 0;
+
+  // --- Clock forwarding state ---------------------------------------------
+  //
+  // Strategy: rather than filter or reconstruct the target's clock, we cache
+  // the (hostTime, sampleTime) pair the target HAL hands us in TargetIOProc
+  // and forward it verbatim (shifted to our local epoch) from
+  // GetZeroTimeStampImpl. The HAL consuming our ZeroTimeStamp derives the
+  // exact target device rate from consecutive reports — no filtering, no
+  // drift control, no reconstruction loss.
 
   // Mach host ticks corresponding to one audio frame at the current sample
-  // rate.  Computed once in OnStartIO.
+  // rate. Computed once in OnStartIO; used only for logging.
   Float64 hostTicksPerFrame_ = 0.0;
 
-  // Accumulated clock offset in host ticks.  Positive values advance the
-  // reported host time (HAL perceives a slower device → reduces write rate),
-  // negative values retard it (HAL perceives a faster device → increases
-  // write rate).
-  Float64 clockOffset_ = 0.0;
+  // True after the first TargetIOProc call has captured the anchor below
+  // and seeded the live snapshot. Before this, GetZeroTimeStampImpl falls
+  // back to the base class implementation.
+  std::atomic<bool> clockInitialized_{false};
+
+  // Anchors captured once at the first TargetIOProc call. Immutable after
+  // clockInitialized_ transitions to true. The deltas (ts_* - anchor*)
+  // define our reported timestamps in our own epoch.
+  std::atomic<UInt64> ourAnchorHostTime_{0};
+  std::atomic<UInt64> targetAnchorHostTime_{0};
+  std::atomic<UInt64> targetAnchorSampleBits_{0};  // Float64 as bits
+
+  // Live snapshot of the target's (hostTime, sampleTime), updated every
+  // TargetIOProc call. A seqlock keeps the pair consistent for the reader
+  // in GetZeroTimeStampImpl without blocking the real-time writer.
+  // Sequence is even when the pair is stable, odd while a write is in
+  // progress.
+  std::atomic<UInt64> targetTsSeq_{0};
+  std::atomic<UInt64> targetTsHostTime_{0};
+  std::atomic<UInt64> targetTsSampleBits_{0};  // Float64 as bits
+
+  // Monotonic period counter used by GetZeroTimeStampImpl to produce
+  // period-aligned, never-regressing (sampleTime, hostTime) reports. The
+  // counter advances based on wall-clock time (mach_absolute_time) — this
+  // matches the base aspl::Device behaviour and keeps the HAL seeing a
+  // smoothly advancing device position even between TargetIOProc calls.
+  std::atomic<UInt64> zeroTimeStampPeriodCounter_{0};
+
+  // Last hostTime reported by GetZeroTimeStampImpl, used to clamp hostTime
+  // so it never regresses when the derived ticks-per-frame shifts slightly
+  // between reads.
+  std::atomic<UInt64> lastZtsHostTime_{0};
+
+  // Diagnostic counters, updated on the IOProc thread and periodically
+  // published to the tracer. Not used for correctness.
+  UInt64 underrunCount_ = 0;
+  UInt64 ioProcCallCount_ = 0;
+
+  // Overrun counter on the producer (OnWriteMixedOutput) side.
+  std::atomic<UInt64> overrunSampleCount_{0};
+  std::atomic<UInt64> writeCallCount_{0};
+  std::atomic<UInt64> writeSampleCount_{0};
+  std::atomic<UInt32> maxWriteChunkSamples_{0};
+
+  // Ring-fill tracking across the current reporting interval.
+  size_t ringFillMin_ = SIZE_MAX;
+  size_t ringFillMax_ = 0;
 };
 
 }  // namespace ProxyAudio

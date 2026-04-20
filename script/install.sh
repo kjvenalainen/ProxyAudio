@@ -50,16 +50,39 @@ fi
 ACTUAL_TARGET=$(readlink "$LATEST_SYMLINK")
 FULL_TARGET_PATH="$BUILD_DIR/$ACTUAL_TARGET"
 
+# Derive the bundle name from the source (e.g. "ProxyAudio.driver")
+BUNDLE_NAME="$(basename "$FULL_TARGET_PATH")"
+INSTALL_DIR="/Library/Audio/Plug-Ins/HAL"
+INSTALLED_BUNDLE="$INSTALL_DIR/$BUNDLE_NAME"
+
 echo "Installing ProxyAudio driver..."
 echo "Source: $FULL_TARGET_PATH"
-echo "Target: /Library/Audio/Plug-Ins/HAL/"
+echo "Target: $INSTALL_DIR/"
 
-# Perform the installation
+# Stop coreaudiod BEFORE touching the bundle. If we overwrite the bundle while
+# coreaudiod has it loaded, the kernel keeps a cached code-signature blob
+# (with the old cs_mtime) attached to the inode. cp -R truncates the existing
+# file in place, reusing the inode, so the next page-in fails with:
+#   "rejecting invalid page ... (cs_mtime:X != mtime:Y)"
+# Killing coreaudiod first releases its vnodes so the cs_blob cache is dropped.
+echo "Stopping coreaudiod..."
+sudo killall -9 coreaudiod 2>/dev/null || true
+
+# Remove the previously installed bundle so the new copy gets fresh inodes.
+# Without this, cp overwrites files in place and the kernel may still have a
+# stale code-signature association with the old inode.
+if [[ -e "$INSTALLED_BUNDLE" ]]; then
+    echo "Removing previous bundle at $INSTALLED_BUNDLE..."
+    sudo rm -rf "$INSTALLED_BUNDLE"
+fi
+
 echo "Copying driver bundle..."
-sudo cp -R "$FULL_TARGET_PATH" /Library/Audio/Plug-Ins/HAL/
+sudo cp -R "$FULL_TARGET_PATH" "$INSTALL_DIR/"
 
-echo "Restarting Core Audio daemon..."
-sudo killall -9 coreaudiod
+# launchd will restart coreaudiod automatically; nudge it once more in case
+# it came back up between the rm and the cp.
+echo "Restarting coreaudiod..."
+sudo killall -9 coreaudiod 2>/dev/null || true
 
 echo "ProxyAudio driver installed successfully!"
-echo "The driver from build/$ACTUAL_TARGET has been installed to /Library/Audio/Plug-Ins/HAL/"
+echo "The driver from build/$ACTUAL_TARGET has been installed to $INSTALL_DIR/"
