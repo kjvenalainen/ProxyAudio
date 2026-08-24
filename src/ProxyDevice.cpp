@@ -42,6 +42,9 @@ static constexpr UInt32 kPrebufferCycles = 1;
 // Default buffer frame size if unable to query from target device.
 static constexpr UInt32 kDefaultBufferFrameSize = 256;
 
+// This is the period advertised by the proxy and used to model its clock.
+static constexpr UInt32 kProxyZeroTimeStampPeriod = 16384;
+
 static UInt32 GetDeviceLatencySafely(const AudioObjectID targetDeviceID) {
   try {
     // First try to get the latency from the target device on output scope.
@@ -115,6 +118,7 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
             GetDeviceCanBeDefaultForSystemSoundsProperty(targetDeviceID),
         .SampleRate = GetDeviceSampleRateProperty(targetDeviceID),
         .Latency = latencyWithBuffer,
+        .ZeroTimeStampPeriod = kProxyZeroTimeStampPeriod,
     };
 
     ProxyAudio::Tracer::FromTracer(context->Tracer)
@@ -165,6 +169,9 @@ ProxyDevice::ProxyDevice(private_tag,
           context,
           DeviceSampleRateAddress,
           [this](const Float64& value) {
+            if (sampleRateChangeInProgress_.load(std::memory_order_acquire)) {
+              return;
+            }
             RequestConfigurationChange(
                 [this, value]() { PerformSampleRateChange(value); });
           },
@@ -202,7 +209,10 @@ ProxyDevice::ProxyDevice(private_tag,
                   status);
   }
 
-  status = SetNominalSampleRateImpl(sampleRateProxy_.GetValue());
+  // The constructor only initializes the proxy's cached value. Do not use the
+  // override here: it is reserved for system-initiated changes and rebuilds
+  // streams after it has updated the target device.
+  status = aspl::Device::SetNominalSampleRateImpl(sampleRateProxy_.GetValue());
   if (status != noErr) {
     ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
         ->Message(ProxyAudio::Tracer::Error,
@@ -403,6 +413,7 @@ void ProxyDevice::RemoveStreams() {
 OSStatus ProxyDevice::OnStartIO() {
   auto tracer = ProxyAudio::Tracer::FromTracer(GetContext()->Tracer);
   tracer->Message(Tracer::Info, "ProxyDevice::OnStartIO() Starting I/O");
+  targetIORunning_.store(false, std::memory_order_release);
 
   // Determine the output stream format so we know the channel layout.
   auto outputStream = GetStreamByIndex(aspl::Direction::Output, 0);
@@ -432,7 +443,7 @@ OSStatus ProxyDevice::OnStartIO() {
     return kAudioHardwareNotRunningError;
   }
 
-  // Cache the host-tick duration of one audio frame for the adaptive clock.
+  // Cache the host-tick duration of one audio frame for the local clock.
   {
     struct mach_timebase_info timeBase{};
     mach_timebase_info(&timeBase);
@@ -442,17 +453,14 @@ OSStatus ProxyDevice::OnStartIO() {
     hostTicksPerFrame_ = hostClockFrequency / format.mSampleRate;
   }
 
-  // Reset clock forwarding state so a fresh start begins with no stale
-  // anchor from a previous session.
-  clockInitialized_.store(false, std::memory_order_relaxed);
-  ourAnchorHostTime_.store(0, std::memory_order_relaxed);
-  targetAnchorHostTime_.store(0, std::memory_order_relaxed);
-  targetAnchorSampleBits_.store(0, std::memory_order_relaxed);
-  targetTsSeq_.store(0, std::memory_order_relaxed);
-  targetTsHostTime_.store(0, std::memory_order_relaxed);
-  targetTsSampleBits_.store(0, std::memory_order_relaxed);
+  // Anchor the local timeline and seed its first read-time snapshot at I/O
+  // start, matching NullAudio. TargetIOProc will shortly overwrite this
+  // snapshot with the first real target read and then advance the seed.
+  const UInt64 startHostTime = mach_absolute_time();
+  zeroTimeStampAnchorHostTime_.store(startHostTime, std::memory_order_relaxed);
+  lastTargetReadHostTime_.store(startHostTime, std::memory_order_relaxed);
+  hasTargetReadTime_.store(false, std::memory_order_relaxed);
   zeroTimeStampPeriodCounter_.store(0, std::memory_order_relaxed);
-  lastZtsHostTime_.store(0, std::memory_order_relaxed);
   underrunCount_ = 0;
   ioProcCallCount_ = 0;
   overrunSampleCount_.store(0, std::memory_order_relaxed);
@@ -482,7 +490,7 @@ OSStatus ProxyDevice::OnStartIO() {
   }
 
   // Prebuffer a fixed number of buffer cycles with silence to provide a
-  // latency cushion while the clock filter settles.
+  // latency cushion at startup.
   prebufferFrames_ = bufferFrameSize * kPrebufferCycles;
 
   // Cap the prebuffer at half the ring capacity so there is always enough
@@ -535,6 +543,10 @@ OSStatus ProxyDevice::OnStartIO() {
     return status;
   }
 
+  // Make the ring visible before starting the target: AudioDeviceStart may
+  // invoke TargetIOProc before it returns.
+  targetIORunning_.store(true, std::memory_order_release);
+
   // Start the IOProc -- the target device will begin calling TargetIOProc.
   status = AudioDeviceStart(GetTargetObjectID(), ioProcID_);
   if (status != noErr) {
@@ -543,11 +555,10 @@ OSStatus ProxyDevice::OnStartIO() {
                     static_cast<int>(status));
     AudioDeviceDestroyIOProcID(GetTargetObjectID(), ioProcID_);
     ioProcID_ = nullptr;
+    targetIORunning_.store(false, std::memory_order_release);
     ringBuffer_.reset();
     return status;
   }
-
-  targetIORunning_.store(true, std::memory_order_release);
 
   tracer->Message(Tracer::Info,
                   "ProxyDevice::OnStartIO() Target IOProc started on "
@@ -573,53 +584,20 @@ void ProxyDevice::OnStopIO() {
 
   ringBuffer_.reset();
 
-  // Log final stats before clearing. Compute the observed mean rate over
-  // the whole session directly from the anchor and latest target timestamps
-  // — no filter, no state, no drift.
-  Float64 observedTpf = hostTicksPerFrame_;
-  if (clockInitialized_.load(std::memory_order_acquire)) {
-    const UInt64 anchorHost =
-        targetAnchorHostTime_.load(std::memory_order_relaxed);
-    const UInt64 anchorSampleBits =
-        targetAnchorSampleBits_.load(std::memory_order_relaxed);
-    const UInt64 latestHost =
-        targetTsHostTime_.load(std::memory_order_relaxed);
-    const UInt64 latestSampleBits =
-        targetTsSampleBits_.load(std::memory_order_relaxed);
-    Float64 anchorSample;
-    Float64 latestSample;
-    std::memcpy(&anchorSample, &anchorSampleBits, sizeof(Float64));
-    std::memcpy(&latestSample, &latestSampleBits, sizeof(Float64));
-    const Float64 deltaSample = latestSample - anchorSample;
-    if (deltaSample > 0.0 && latestHost > anchorHost) {
-      observedTpf =
-          static_cast<Float64>(latestHost - anchorHost) / deltaSample;
-    }
-  }
-  const Float64 nominalTpf = hostTicksPerFrame_;
-  const Float64 driftPpm =
-      (nominalTpf > 0.0) ? ((observedTpf - nominalTpf) / nominalTpf) * 1.0e6
-                         : 0.0;
   tracer->Message(
       Tracer::Info,
       "ProxyDevice::OnStopIO() Final stats: calls=%llu, underruns=%llu, "
-      "overrunSamples=%llu, tpf=%.4f (nominal=%.4f, observed drift=%.1f ppm)",
+      "overrunSamples=%llu",
       static_cast<unsigned long long>(ioProcCallCount_),
       static_cast<unsigned long long>(underrunCount_),
       static_cast<unsigned long long>(
-          overrunSampleCount_.load(std::memory_order_relaxed)),
-      observedTpf, nominalTpf, driftPpm);
+          overrunSampleCount_.load(std::memory_order_relaxed)));
 
-  // Clear clock forwarding state.
-  clockInitialized_.store(false, std::memory_order_relaxed);
-  ourAnchorHostTime_.store(0, std::memory_order_relaxed);
-  targetAnchorHostTime_.store(0, std::memory_order_relaxed);
-  targetAnchorSampleBits_.store(0, std::memory_order_relaxed);
-  targetTsSeq_.store(0, std::memory_order_relaxed);
-  targetTsHostTime_.store(0, std::memory_order_relaxed);
-  targetTsSampleBits_.store(0, std::memory_order_relaxed);
+  // Clear device-clock state.
+  zeroTimeStampAnchorHostTime_.store(0, std::memory_order_relaxed);
+  lastTargetReadHostTime_.store(0, std::memory_order_relaxed);
+  hasTargetReadTime_.store(false, std::memory_order_relaxed);
   zeroTimeStampPeriodCounter_.store(0, std::memory_order_relaxed);
-  lastZtsHostTime_.store(0, std::memory_order_relaxed);
   hostTicksPerFrame_ = 0.0;
   prebufferFrames_ = 0;
   underrunCount_ = 0;
@@ -636,110 +614,45 @@ void ProxyDevice::OnStopIO() {
 }
 
 // ---------------------------------------------------------------------------
-// Clock forwarding: report a ZeroTimeStamp whose rate is the target device's
+// Device clock: model local TargetIOProc ring-buffer read times
 // ---------------------------------------------------------------------------
 //
-// We do not filter or reconstruct the target's clock. Instead we cache the
-// (hostTime, sampleTime) pair the target HAL hands us in TargetIOProc and,
-// in GetZeroTimeStampImpl, derive ticks-per-frame directly from the
-// anchor-to-latest delta — a baseline that grows with the session and is
-// exact by construction. We then package that rate into the same
-// period-counter-driven report format aspl::Device uses so the HAL sees a
-// smoothly advancing, period-aligned, monotonic device position.
+// The startup anchor is local, like NullAudio. TargetIOProc supplies the local
+// time that advances this fixed-rate, 16384-frame timeline. The target
+// callback's input and output AudioTimeStamps are intentionally ignored.
 
 OSStatus ProxyDevice::GetZeroTimeStampImpl(UInt32 clientID,
                                            Float64* outSampleTime,
                                            UInt64* outHostTime,
                                            UInt64* outSeed) {
-  // Until the first TargetIOProc callback has fired, we have no target
-  // timestamp to forward. Fall back to the base class, which reports
-  // nominal-rate timestamps based on the device's start time.
-  if (!clockInitialized_.load(std::memory_order_acquire)) {
-    return aspl::Device::GetZeroTimeStampImpl(clientID, outSampleTime,
-                                              outHostTime, outSeed);
-  }
+  const UInt64 seed = zeroTimeStampSeed_.load(std::memory_order_acquire);
+  const UInt64 anchor =
+      zeroTimeStampAnchorHostTime_.load(std::memory_order_acquire);
+  const UInt64 readTime =
+      lastTargetReadHostTime_.load(std::memory_order_acquire);
 
-  const UInt64 ourAnchor = ourAnchorHostTime_.load(std::memory_order_relaxed);
-  const UInt64 targetAnchorHost =
-      targetAnchorHostTime_.load(std::memory_order_relaxed);
-  const UInt64 targetAnchorSampleBits =
-      targetAnchorSampleBits_.load(std::memory_order_relaxed);
-  Float64 targetAnchorSample;
-  std::memcpy(&targetAnchorSample, &targetAnchorSampleBits, sizeof(Float64));
+  const Float64 ticksPerPeriod =
+      hostTicksPerFrame_ * static_cast<Float64>(kProxyZeroTimeStampPeriod);
 
-  // Seqlock-protected read of the latest target timestamp pair.
-  UInt64 seq1;
-  UInt64 seq2;
-  UInt64 targetHost;
-  UInt64 targetSampleBits;
-  do {
-    seq1 = targetTsSeq_.load(std::memory_order_acquire);
-    if (seq1 & 1ULL) {
-      continue;
-    }
-    targetHost = targetTsHostTime_.load(std::memory_order_relaxed);
-    targetSampleBits = targetTsSampleBits_.load(std::memory_order_relaxed);
-    seq2 = targetTsSeq_.load(std::memory_order_acquire);
-  } while (seq1 != seq2);
-
-  Float64 targetSample;
-  std::memcpy(&targetSample, &targetSampleBits, sizeof(Float64));
-
-  // Derive ticks-per-frame straight from the target's own timeline. The
-  // baseline (targetSample - targetAnchorSample) grows with every target
-  // IOProc call, so this is mathematically the exact mean target rate over
-  // the session — no filter lag, no secular bias. Until we have enough
-  // baseline to trust the division (first few ms), fall back to nominal.
-  const Float64 deltaSampleTarget = targetSample - targetAnchorSample;
-  const UInt64 deltaHostTarget =
-      (targetHost > targetAnchorHost) ? (targetHost - targetAnchorHost) : 0;
-  Float64 ticksPerFrame = hostTicksPerFrame_;
-  if (deltaSampleTarget > 64.0 && deltaHostTarget > 0) {
-    ticksPerFrame =
-        static_cast<Float64>(deltaHostTarget) / deltaSampleTarget;
-  }
-
-  const Float64 period = static_cast<Float64>(GetZeroTimeStampPeriod());
-  const Float64 ticksPerPeriod = ticksPerFrame * period;
-
-  // Advance the monotonic period counter up to (but not past) current wall
-  // time. This matches aspl::Device's convention and keeps the HAL seeing
-  // sampleTime progressing smoothly even between TargetIOProc updates.
-  const UInt64 now = mach_absolute_time();
   UInt64 counter = zeroTimeStampPeriodCounter_.load(std::memory_order_relaxed);
+  // A GetZeroTimeStamp request may arrive several periods after the prior
+  // one. Advance all elapsed periods so the fixed-rate timeline never leaves
+  // CoreAudio attempting to catch up with stale timestamps.
   while (ticksPerPeriod > 0.0) {
-    const UInt64 nextPeriodHost =
-        ourAnchor +
+    const UInt64 nextPeriodHostTime =
+        anchor +
         static_cast<UInt64>(static_cast<Float64>(counter + 1) * ticksPerPeriod);
-    if (nextPeriodHost > now) {
+    if (readTime < nextPeriodHostTime) {
       break;
     }
     ++counter;
   }
   zeroTimeStampPeriodCounter_.store(counter, std::memory_order_relaxed);
 
-  // sampleTime is period-aligned plus the constant prebuffer offset so the
-  // HAL's notion of device position stays a cushion's worth ahead of real
-  // consumption.
-  const Float64 sampleTime = static_cast<Float64>(counter) * period +
-                             static_cast<Float64>(prebufferFrames_);
-
-  // hostTime projected from the anchor at the derived target rate.
-  UInt64 hostTime =
-      ourAnchor + static_cast<UInt64>(sampleTime * ticksPerFrame);
-
-  // Clamp to strict monotonicity. ticksPerFrame can shift very slightly
-  // between reads (as the baseline grows), which can cause hostTime for a
-  // given counter to nudge backward. The HAL rejects non-monotonic reports.
-  const UInt64 lastHost = lastZtsHostTime_.load(std::memory_order_relaxed);
-  if (hostTime <= lastHost) {
-    hostTime = lastHost + 1;
-  }
-  lastZtsHostTime_.store(hostTime, std::memory_order_release);
-
-  *outSampleTime = sampleTime;
-  *outHostTime = hostTime;
-  *outSeed = 1;
+  *outSampleTime = static_cast<Float64>(counter * kProxyZeroTimeStampPeriod);
+  *outHostTime = anchor + static_cast<UInt64>(static_cast<Float64>(counter) *
+                                              ticksPerPeriod);
+  *outSeed = seed;
 
   return kAudioHardwareNoError;
 }
@@ -763,9 +676,7 @@ void ProxyDevice::OnWriteMixedOutput(
   const auto* samples = static_cast<const Float32*>(bytes);
   const size_t sampleCount = bytesCount / sizeof(Float32);
 
-  // Write as much as possible into the ring buffer. The adaptive clock in
-  // GetZeroTimeStampImpl steers the HAL's write rate to match the target
-  // consumption rate, so overflow should be rare. If it does occur, Write
+  // Write as much as possible into the ring buffer. If it overflows, Write
   // returns fewer samples than requested and we track the dropped count.
   const size_t written = ringBuffer_->Write(samples, sampleCount);
   const auto callCount =
@@ -818,6 +729,11 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
 
   ++self->ioProcCallCount_;
 
+  // Snapshot the local clock at the point we read from the ring buffer. Do
+  // not use inInputTime or inOutputTime: those timestamps describe the target
+  // device's timebase, while the proxy's ZeroTimeStamp has its own timebase.
+  const UInt64 readHostTime = mach_absolute_time();
+
   // Track ring fill extremes before we read anything, for diagnostics.
   {
     const size_t fillBefore = self->ringBuffer_->GetCount();
@@ -827,16 +743,13 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
       self->ringFillMax_ = fillBefore;
   }
 
-  // Fill every output buffer from the ring buffer. Since the HAL writes at
-  // the target's actual clock rate (we forward its timestamps verbatim), the
-  // ring stays near the prebuffer cushion level and underruns should be
-  // rare. If one does occur the remainder is padded with silence.
+  // Fill every output buffer from the ring buffer. If an underrun occurs,
+  // pad the remainder with silence.
   UInt32 underrunSamplesThisCall = 0;
   for (UInt32 i = 0; i < outOutputData->mNumberBuffers; i++) {
     auto& buf = outOutputData->mBuffers[i];
     auto* dest = static_cast<Float32*>(buf.mData);
     const UInt32 samplesNeeded = buf.mDataByteSize / sizeof(Float32);
-
     const size_t samplesRead = self->ringBuffer_->Read(dest, samplesNeeded);
 
     if (samplesRead < samplesNeeded) {
@@ -861,91 +774,30 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
     }
   }
 
-  // Capture the target's (hostTime, sampleTime) pair and publish it to the
-  // snapshot read by GetZeroTimeStampImpl. The first valid call also
-  // establishes the anchor, which ties the target's clock epoch to ours so
-  // we can report timestamps in our local reference frame.
-  if (inOutputTime != nullptr &&
-      (inOutputTime->mFlags & kAudioTimeStampHostTimeValid) &&
-      (inOutputTime->mFlags & kAudioTimeStampSampleTimeValid)) {
-    const UInt64 currentHostTime = inOutputTime->mHostTime;
-    const Float64 currentSampleTime = inOutputTime->mSampleTime;
-    UInt64 currentSampleBits;
-    std::memcpy(&currentSampleBits, &currentSampleTime, sizeof(UInt64));
+  // Publish the read time after completing the read. The first published
+  // value switches GetZeroTimeStamp to this timebase, so change the seed once
+  // to make the HAL discard timestamps from the startup timebase.
+  const bool isFirstRead =
+      !self->hasTargetReadTime_.load(std::memory_order_acquire);
+  self->lastTargetReadHostTime_.store(readHostTime, std::memory_order_release);
+  if (isFirstRead) {
+    self->zeroTimeStampSeed_.fetch_add(1, std::memory_order_release);
+    self->hasTargetReadTime_.store(true, std::memory_order_release);
 
-    if (!self->clockInitialized_.load(std::memory_order_acquire)) {
-      // First valid timestamp: anchor our local clock to the target's.
-      // Use mach_absolute_time() (via inNow when available) so ourAnchor
-      // refers to a real present moment rather than the future time
-      // inOutputTime->mHostTime points at.
-      const UInt64 nowAnchor =
-          (inNow != nullptr && (inNow->mFlags & kAudioTimeStampHostTimeValid))
-              ? inNow->mHostTime
-              : mach_absolute_time();
-      self->ourAnchorHostTime_.store(nowAnchor, std::memory_order_relaxed);
-      self->targetAnchorHostTime_.store(currentHostTime,
-                                        std::memory_order_relaxed);
-      self->targetAnchorSampleBits_.store(currentSampleBits,
-                                          std::memory_order_relaxed);
-      // Seed the live snapshot with the same values so the first reader
-      // sees deltaSample = deltaHost = 0.
-      self->targetTsHostTime_.store(currentHostTime,
-                                    std::memory_order_relaxed);
-      self->targetTsSampleBits_.store(currentSampleBits,
-                                      std::memory_order_relaxed);
-      self->targetTsSeq_.store(0, std::memory_order_relaxed);
-      self->clockInitialized_.store(true, std::memory_order_release);
-
-      ProxyAudio::Tracer::FromTracer(self->GetContext()->Tracer)
-          ->Message(
-              ProxyAudio::Tracer::Info,
-              "ProxyDevice::TargetIOProc() Clock forwarding initialized: "
-              "ourAnchorHost=%llu, targetAnchorHost=%llu, "
-              "targetAnchorSample=%.0f, prebufferFrames=%u",
-              static_cast<unsigned long long>(nowAnchor),
-              static_cast<unsigned long long>(currentHostTime),
-              currentSampleTime, self->prebufferFrames_);
-    } else {
-      // Seqlock-style update: bump the sequence to odd (writer busy),
-      // store the new pair, bump back to even (stable). Single writer, so
-      // we don't need CAS semantics.
-      const UInt64 s =
-          self->targetTsSeq_.load(std::memory_order_relaxed);
-      self->targetTsSeq_.store(s + 1, std::memory_order_release);
-      self->targetTsHostTime_.store(currentHostTime,
-                                    std::memory_order_relaxed);
-      self->targetTsSampleBits_.store(currentSampleBits,
-                                      std::memory_order_relaxed);
-      self->targetTsSeq_.store(s + 2, std::memory_order_release);
-    }
+    ProxyAudio::Tracer::FromTracer(self->GetContext()->Tracer)
+        ->Message(ProxyAudio::Tracer::Info,
+                  "ProxyDevice::TargetIOProc() Clock read snapshot: "
+                  "anchorHost=%llu, firstReadHost=%llu, seed=%llu",
+                  static_cast<unsigned long long>(
+                      self->zeroTimeStampAnchorHostTime_.load(
+                          std::memory_order_relaxed)),
+                  static_cast<unsigned long long>(readHostTime),
+                  static_cast<unsigned long long>(self->zeroTimeStampSeed_.load(
+                      std::memory_order_relaxed)));
   }
 
-  // Periodically log overall streaming health. tpf is computed directly
-  // from the anchor and latest target timestamps — a long baseline average
-  // that converges to the exact target clock rate.
+  // Periodically log overall streaming health.
   if (self->ioProcCallCount_ % 500 == 0) {
-    Float64 tpf = self->hostTicksPerFrame_;
-    if (self->clockInitialized_.load(std::memory_order_acquire)) {
-      const UInt64 anchorHost =
-          self->targetAnchorHostTime_.load(std::memory_order_relaxed);
-      const UInt64 anchorSampleBits =
-          self->targetAnchorSampleBits_.load(std::memory_order_relaxed);
-      const UInt64 latestHost =
-          self->targetTsHostTime_.load(std::memory_order_relaxed);
-      const UInt64 latestSampleBits =
-          self->targetTsSampleBits_.load(std::memory_order_relaxed);
-      Float64 anchorSample;
-      Float64 latestSample;
-      std::memcpy(&anchorSample, &anchorSampleBits, sizeof(Float64));
-      std::memcpy(&latestSample, &latestSampleBits, sizeof(Float64));
-      const Float64 deltaSample = latestSample - anchorSample;
-      if (deltaSample > 0.0 && latestHost > anchorHost) {
-        tpf = static_cast<Float64>(latestHost - anchorHost) / deltaSample;
-      }
-    }
-    const Float64 nominal = self->hostTicksPerFrame_;
-    const Float64 driftPpm =
-        (nominal > 0.0) ? ((tpf - nominal) / nominal) * 1.0e6 : 0.0;
     const UInt64 overruns =
         self->overrunSampleCount_.load(std::memory_order_relaxed);
     const UInt64 writeCalls =
@@ -961,15 +813,13 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
             ProxyAudio::Tracer::Info,
             "ProxyDevice::TargetIOProc() Stats: calls=%llu underruns=%llu "
             "overrunSamples=%llu ringFill=%zu/%zu ringMin=%zu ringMax=%zu "
-            "writeCalls=%llu writeSamples=%llu maxWriteChunk=%u "
-            "tpf=%.4f (nominal=%.4f observed drift=%.1f ppm)",
+            "writeCalls=%llu writeSamples=%llu maxWriteChunk=%u",
             static_cast<unsigned long long>(self->ioProcCallCount_),
             static_cast<unsigned long long>(self->underrunCount_),
             static_cast<unsigned long long>(overruns),
             self->ringBuffer_->GetCount(), self->ringBuffer_->GetCapacity(),
             fillMin, fillMax, static_cast<unsigned long long>(writeCalls),
-            static_cast<unsigned long long>(writeSamples), maxChunk, tpf,
-            nominal, driftPpm);
+            static_cast<unsigned long long>(writeSamples), maxChunk);
 
     // Reset per-interval extremes.
     self->ringFillMin_ = SIZE_MAX;
@@ -990,56 +840,71 @@ void ProxyDevice::PerformSampleRateChange(const Float64& value) {
                   "changed to %f",
                   value);
 
-  // This method runs inside the HAL's PerformConfigurationChange callback.
-  // Exceptions MUST NOT propagate out of here — they would unwind through
-  // the HAL's C code, which is undefined behaviour and typically crashes
-  // the audio server.
-  try {
-    // Immediately stop feeding audio to the target device. The
-    // samples currently in the ring buffer were produced at the
-    // old sample rate and would play back at the wrong pitch on
-    // the reconfigured target. Setting this flag causes the
-    // IOProc to output silence and OnWriteMixedOutput to discard
-    // incoming data until the HAL completes the full
-    // stop → reconfigure → restart cycle.
-    targetIORunning_.store(false, std::memory_order_release);
+  const OSStatus status = ApplySampleRateChange(value, false);
+  if (status != noErr) {
+    tracer->Message(ProxyAudio::Tracer::Error,
+                    "ProxyDevice:PerformSampleRateChange() Failed during "
+                    "reconfiguration: %d",
+                    static_cast<int>(status));
+  }
+}
 
-    // Reset the clock forwarding state so the next streaming session starts
-    // fresh; the anchor must be re-captured against the new sample rate.
-    clockInitialized_.store(false, std::memory_order_relaxed);
-    ourAnchorHostTime_.store(0, std::memory_order_relaxed);
-    targetAnchorHostTime_.store(0, std::memory_order_relaxed);
-    targetAnchorSampleBits_.store(0, std::memory_order_relaxed);
-    targetTsSeq_.store(0, std::memory_order_relaxed);
-    targetTsHostTime_.store(0, std::memory_order_relaxed);
-    targetTsSampleBits_.store(0, std::memory_order_relaxed);
+OSStatus ProxyDevice::SetNominalSampleRateImpl(Float64 rate) {
+  // This is invoked by the HAL when it changes the proxy device's nominal
+  // rate. Set the target first so the proxy's device and stream formats stay
+  // in lockstep with the hardware it feeds.
+  return ApplySampleRateChange(rate, true);
+}
+
+OSStatus ProxyDevice::ApplySampleRateChange(Float64 value,
+                                            bool setTargetSampleRate) {
+  // A target change notification can be delivered synchronously while we set
+  // its property. It describes the same transition, so only the outer change
+  // performs the stream rebuild.
+  if (sampleRateChangeInProgress_.exchange(true, std::memory_order_acq_rel)) {
+    return aspl::Device::SetNominalSampleRateImpl(value);
+  }
+
+  const auto clearInProgress = [this]() {
+    sampleRateChangeInProgress_.store(false, std::memory_order_release);
+  };
+
+  try {
+    if (setTargetSampleRate && sampleRateProxy_.GetValue() != value) {
+      sampleRateProxy_.SetValue(value);
+      if (sampleRateProxy_.GetValue() != value) {
+        clearInProgress();
+        return kAudioDeviceUnsupportedFormatError;
+      }
+    }
+
+    // Samples and timestamps from the old rate must not cross into the new
+    // target format. The HAL performs the corresponding stop/start cycle.
+    targetIORunning_.store(false, std::memory_order_release);
+    zeroTimeStampAnchorHostTime_.store(0, std::memory_order_relaxed);
+    lastTargetReadHostTime_.store(0, std::memory_order_relaxed);
+    hasTargetReadTime_.store(false, std::memory_order_relaxed);
     zeroTimeStampPeriodCounter_.store(0, std::memory_order_relaxed);
-    lastZtsHostTime_.store(0, std::memory_order_relaxed);
 
     RemoveStreams();
 
-    SetNominalSampleRateImpl(value);
+    const OSStatus status = aspl::Device::SetNominalSampleRateImpl(value);
+    if (status == noErr) {
+      AddProxyStreams();
+      NotifyPropertiesChanged({
+          kAudioDevicePropertyNominalSampleRate,
+          kAudioDevicePropertyStreams,
+      });
+    }
 
-    AddProxyStreams();
-
-    NotifyPropertiesChanged({
-        kAudioDevicePropertyNominalSampleRate,
-        kAudioDevicePropertyStreams,
-    });
+    clearInProgress();
+    return status;
   } catch (const OSStatusError& e) {
-    tracer->Message(ProxyAudio::Tracer::Error,
-                    "ProxyDevice:PerformSampleRateChange() Failed during "
-                    "reconfiguration: %s — device may be in a degraded state",
-                    e.what());
-  } catch (const std::exception& e) {
-    tracer->Message(ProxyAudio::Tracer::Error,
-                    "ProxyDevice:PerformSampleRateChange() Unexpected "
-                    "exception: %s",
-                    e.what());
+    clearInProgress();
+    return e.GetStatus();
   } catch (...) {
-    tracer->Message(ProxyAudio::Tracer::Error,
-                    "ProxyDevice:PerformSampleRateChange() Unknown exception "
-                    "during reconfiguration");
+    clearInProgress();
+    return kAudioHardwareUnspecifiedError;
   }
 }
 

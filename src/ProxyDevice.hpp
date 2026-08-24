@@ -84,10 +84,7 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
                           const void* bytes,
                           UInt32 bytesCount) override;
 
-  // Override the device clock to steer write-rate based on ring buffer level.
-  // When the buffer fills above target we advance the reported host time,
-  // making the HAL perceive a slower device clock and reduce its write rate.
-  // When the buffer drains below target we do the opposite.
+  // Override the device clock using the target IOProc's local read times.
   OSStatus GetZeroTimeStampImpl(UInt32 clientID,
                                 Float64* outSampleTime,
                                 UInt64* outHostTime,
@@ -102,8 +99,18 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
   void RemoveStreams();
 
   // Perform a sample rate change, recreating all streams with the new sample
-  // rate. This should be called via RequestConfigurationChange.
+  // rate after the target device changes. This is called via
+  // RequestConfigurationChange.
   void PerformSampleRateChange(const Float64& value);
+
+  // Applies a rate change in either direction. A system request needs to set
+  // the target device first; a target property notification is already at the
+  // requested rate and only needs to refresh the proxy.
+  OSStatus ApplySampleRateChange(Float64 value, bool setTargetSampleRate);
+
+  // Propagate system-initiated proxy rate changes to the target before
+  // refreshing streams from its new format.
+  OSStatus SetNominalSampleRateImpl(Float64 rate) override;
 
   ProxyProperty<Float64> sampleRateProxy_;
 
@@ -140,51 +147,31 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
   // per-cycle write jitter cannot immediately drain the buffer.
   UInt32 prebufferFrames_ = 0;
 
-  // --- Clock forwarding state ---------------------------------------------
-  //
-  // Strategy: rather than filter or reconstruct the target's clock, we cache
-  // the (hostTime, sampleTime) pair the target HAL hands us in TargetIOProc
-  // and forward it verbatim (shifted to our local epoch) from
-  // GetZeroTimeStampImpl. The HAL consuming our ZeroTimeStamp derives the
-  // exact target device rate from consecutive reports — no filtering, no
-  // drift control, no reconstruction loss.
+  // --- Device clock state -------------------------------------------------
 
   // Mach host ticks corresponding to one audio frame at the current sample
-  // rate. Computed once in OnStartIO; used only for logging.
+  // rate. Computed once in OnStartIO.
   Float64 hostTicksPerFrame_ = 0.0;
 
-  // True after the first TargetIOProc call has captured the anchor below
-  // and seeded the live snapshot. Before this, GetZeroTimeStampImpl falls
-  // back to the base class implementation.
-  std::atomic<bool> clockInitialized_{false};
+  // Set when I/O starts, just as NullAudio anchors its local timeline.
+  std::atomic<UInt64> zeroTimeStampAnchorHostTime_{0};
 
-  // Anchors captured once at the first TargetIOProc call. Immutable after
-  // clockInitialized_ transitions to true. The deltas (ts_* - anchor*)
-  // define our reported timestamps in our own epoch.
-  std::atomic<UInt64> ourAnchorHostTime_{0};
-  std::atomic<UInt64> targetAnchorHostTime_{0};
-  std::atomic<UInt64> targetAnchorSampleBits_{0};  // Float64 as bits
+  // TargetIOProc overwrites this local-clock snapshot on every ring-buffer
+  // read. It is deliberately independent of either target AudioTimeStamp.
+  std::atomic<UInt64> lastTargetReadHostTime_{0};
+  std::atomic<bool> hasTargetReadTime_{false};
 
-  // Live snapshot of the target's (hostTime, sampleTime), updated every
-  // TargetIOProc call. A seqlock keeps the pair consistent for the reader
-  // in GetZeroTimeStampImpl without blocking the real-time writer.
-  // Sequence is even when the pair is stable, odd while a write is in
-  // progress.
-  std::atomic<UInt64> targetTsSeq_{0};
-  std::atomic<UInt64> targetTsHostTime_{0};
-  std::atomic<UInt64> targetTsSampleBits_{0};  // Float64 as bits
-
-  // Monotonic period counter used by GetZeroTimeStampImpl to produce
-  // period-aligned, never-regressing (sampleTime, hostTime) reports. The
-  // counter advances based on wall-clock time (mach_absolute_time) — this
-  // matches the base aspl::Device behaviour and keeps the HAL seeing a
-  // smoothly advancing device position even between TargetIOProc calls.
+  // The period counter defines period-aligned sample and host timestamps.
   std::atomic<UInt64> zeroTimeStampPeriodCounter_{0};
 
-  // Last hostTime reported by GetZeroTimeStampImpl, used to clamp hostTime
-  // so it never regresses when the derived ticks-per-frame shifts slightly
-  // between reads.
-  std::atomic<UInt64> lastZtsHostTime_{0};
+  // The seed changes after the first target read in each I/O session. It is
+  // intentionally not reset at start: until that read arrives, the start-time
+  // snapshot remains the active NullAudio-style clock reference.
+  std::atomic<UInt64> zeroTimeStampSeed_{1};
+
+  // Prevent the target's rate-change notification from recursively applying
+  // the same reconfiguration while this proxy is setting that target rate.
+  std::atomic<bool> sampleRateChangeInProgress_{false};
 
   // Diagnostic counters, updated on the IOProc thread and periodically
   // published to the tracer. Not used for correctness.
