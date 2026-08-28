@@ -19,6 +19,14 @@
 
 namespace ProxyAudio {
 
+struct ZeroTimestamp {
+  // Host-based timestamp of the last time the read(s) looped over the virtual
+  // ring buffer.
+  UInt64 readTimestamp_ = 0;
+  // Index of the number of loops that have occurred.
+  UInt64 zeroTimestampPeriodIndex_ = 0;
+};
+
 struct ProxyDevice;
 
 // Explicit specialization MUST come before ProxyDevice inherits from
@@ -142,32 +150,13 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
   // Number of interleaved channels per frame for the current output format.
   UInt32 outputChannelsPerFrame_ = 0;
 
-  // Number of frames of silence prebuffered into the ring at startup. Gives
-  // the consumer a constant cushion of audio already in flight so the HAL's
-  // per-cycle write jitter cannot immediately drain the buffer.
-  UInt32 prebufferFrames_ = 0;
-
   // --- Device clock state -------------------------------------------------
 
-  // Mach host ticks corresponding to one audio frame at the current sample
-  // rate. Computed once in OnStartIO.
-  Float64 hostTicksPerFrame_ = 0.0;
+  // The zero-timestamp of the device.
+  std::atomic<ZeroTimestamp> zts_;
 
-  // Set when I/O starts, just as NullAudio anchors its local timeline.
-  std::atomic<UInt64> zeroTimeStampAnchorHostTime_{0};
-
-  // TargetIOProc overwrites this local-clock snapshot on every ring-buffer
-  // read. It is deliberately independent of either target AudioTimeStamp.
-  std::atomic<UInt64> lastTargetReadHostTime_{0};
-  std::atomic<bool> hasTargetReadTime_{false};
-
-  // The period counter defines period-aligned sample and host timestamps.
-  std::atomic<UInt64> zeroTimeStampPeriodCounter_{0};
-
-  // The seed changes after the first target read in each I/O session. It is
-  // intentionally not reset at start: until that read arrives, the start-time
-  // snapshot remains the active NullAudio-style clock reference.
-  std::atomic<UInt64> zeroTimeStampSeed_{1};
+  // Cumulative frames read since the start of streaming.
+  std::atomic<UInt64> totalFramesRead_;
 
   // Prevent the target's rate-change notification from recursively applying
   // the same reconfiguration while this proxy is setting that target rate.

@@ -65,6 +65,25 @@
       }
     },
     {
+      "label": "Restart Audio Service",
+      "type": "shell",
+      "command": "sudo",
+      "args": [
+        "killall",
+        "-9",
+        "coreaudiod",
+        "2>/dev/null",
+        "||",
+        "true"
+      ],
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
       "label": "Format Code",
       "type": "shell",
       "command": "make",

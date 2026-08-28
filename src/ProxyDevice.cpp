@@ -8,6 +8,7 @@
 #include <MacTypes.h>
 #include <mach/mach_time.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -30,17 +31,6 @@ namespace ProxyAudio {
 // or the buffer will oscillate between full and empty, producing simultaneous
 // overruns and underruns. At 4 channels and 48 kHz, 8192 frames ≈ 170 ms.
 static constexpr UInt32 kRingBufferFrameCount = 8192;
-
-// Number of target device buffer cycles to prebuffer with silence at startup.
-// This is the steady-state cushion of audio held in the ring buffer and
-// dictates tolerance to scheduling jitter between producer and consumer.
-// Set to 1 cycle for minimum latency; the ring buffer still has additional
-// capacity to absorb occasional HAL scheduler skip/double-write events.
-// 1 cycle ≈ 10.7 ms at 48 kHz with a 512-frame buffer.
-static constexpr UInt32 kPrebufferCycles = 1;
-
-// Default buffer frame size if unable to query from target device.
-static constexpr UInt32 kDefaultBufferFrameSize = 256;
 
 // This is the period advertised by the proxy and used to model its clock.
 static constexpr UInt32 kProxyZeroTimeStampPeriod = 16384;
@@ -443,24 +433,14 @@ OSStatus ProxyDevice::OnStartIO() {
     return kAudioHardwareNotRunningError;
   }
 
-  // Cache the host-tick duration of one audio frame for the local clock.
-  {
-    struct mach_timebase_info timeBase{};
-    mach_timebase_info(&timeBase);
-    // hostClockFrequency = ticks-per-second
-    const Float64 hostClockFrequency =
-        Float64(timeBase.denom) / Float64(timeBase.numer) * 1e9;
-    hostTicksPerFrame_ = hostClockFrequency / format.mSampleRate;
-  }
-
   // Anchor the local timeline and seed its first read-time snapshot at I/O
   // start, matching NullAudio. TargetIOProc will shortly overwrite this
   // snapshot with the first real target read and then advance the seed.
   const UInt64 startHostTime = mach_absolute_time();
-  zeroTimeStampAnchorHostTime_.store(startHostTime, std::memory_order_relaxed);
-  lastTargetReadHostTime_.store(startHostTime, std::memory_order_relaxed);
-  hasTargetReadTime_.store(false, std::memory_order_relaxed);
-  zeroTimeStampPeriodCounter_.store(0, std::memory_order_relaxed);
+  // Temporary, will be overwritten in the first read IO call.
+  zts_.store({.readTimestamp_ = startHostTime, .zeroTimestampPeriodIndex_ = 0},
+             std::memory_order_release);
+  totalFramesRead_.store(0, std::memory_order_release);
   underrunCount_ = 0;
   ioProcCallCount_ = 0;
   overrunSampleCount_.store(0, std::memory_order_relaxed);
@@ -470,66 +450,17 @@ OSStatus ProxyDevice::OnStartIO() {
   ringFillMin_ = SIZE_MAX;
   ringFillMax_ = 0;
 
-  // Query the target device's buffer frame size to determine the prebuffer.
-  UInt32 bufferFrameSize = kDefaultBufferFrameSize;
-  try {
-    bufferFrameSize = ProxyAudio::GetPropertyData<UInt32>(
-        GetTargetObjectID(),
-        {
-            .mSelector = kAudioDevicePropertyBufferFrameSize,
-            .mScope = kAudioObjectPropertyScopeOutput,
-            .mElement = kAudioObjectPropertyElementMain,
-        },
-        {});
-  } catch (const OSStatusError& e) {
-    tracer->Message(
-        Tracer::Info,
-        "ProxyDevice::OnStartIO() Could not query buffer frame size: %s, "
-        "using default %u",
-        e.what(), kDefaultBufferFrameSize);
-  }
-
-  // Prebuffer a fixed number of buffer cycles with silence to provide a
-  // latency cushion at startup.
-  prebufferFrames_ = bufferFrameSize * kPrebufferCycles;
-
-  // Cap the prebuffer at half the ring capacity so there is always enough
-  // free space for the HAL's first writes; otherwise the ring starts full
-  // and every OnWriteMixedOutput call drops samples until the consumer
-  // catches up.
-  const UInt32 maxPrebuffer = kRingBufferFrameCount / 2;
-  if (prebufferFrames_ > maxPrebuffer) {
-    tracer->Message(
-        Tracer::Info,
-        "ProxyDevice::OnStartIO() Capping prebuffer from %u to %u frames "
-        "(ring capacity=%u frames)",
-        prebufferFrames_, maxPrebuffer, kRingBufferFrameCount);
-    prebufferFrames_ = maxPrebuffer;
-  }
-
   // Create a ring buffer large enough for kRingBufferFrameCount frames.
   // Each frame has outputChannelsPerFrame_ Float32 samples.
   const size_t capacitySamples =
       static_cast<size_t>(kRingBufferFrameCount) * outputChannelsPerFrame_;
   ringBuffer_ = std::make_unique<RingBuffer<Float32>>(capacitySamples);
 
-  // Pre-fill the buffer with the computed prebuffer amount.
-  const size_t preFillSamples =
-      static_cast<size_t>(prebufferFrames_) * outputChannelsPerFrame_;
-  Float32 silence[1024] = {};
-  size_t remaining = preFillSamples;
-  while (remaining > 0) {
-    const size_t chunk = std::min(remaining, sizeof(silence) / sizeof(Float32));
-    ringBuffer_->Write(silence, chunk);
-    remaining -= chunk;
-  }
-
   tracer->Message(Tracer::Info,
                   "ProxyDevice::OnStartIO() Ring buffer created: "
-                  "capacity=%zu samples, pre-filled=%zu samples (%u frames), "
-                  "channels=%u, sampleRate=%.0f, bufferFrameSize=%u",
-                  capacitySamples, preFillSamples, prebufferFrames_,
-                  outputChannelsPerFrame_, format.mSampleRate, bufferFrameSize);
+                  "capacity=%zu samples, "
+                  "channels=%u, sampleRate=%.0f",
+                  capacitySamples, outputChannelsPerFrame_, format.mSampleRate);
 
   // Register an IOProc on the target hardware device.
   OSStatus status = AudioDeviceCreateIOProcID(GetTargetObjectID(), TargetIOProc,
@@ -594,12 +525,8 @@ void ProxyDevice::OnStopIO() {
           overrunSampleCount_.load(std::memory_order_relaxed)));
 
   // Clear device-clock state.
-  zeroTimeStampAnchorHostTime_.store(0, std::memory_order_relaxed);
-  lastTargetReadHostTime_.store(0, std::memory_order_relaxed);
-  hasTargetReadTime_.store(false, std::memory_order_relaxed);
-  zeroTimeStampPeriodCounter_.store(0, std::memory_order_relaxed);
-  hostTicksPerFrame_ = 0.0;
-  prebufferFrames_ = 0;
+  zts_.store({}, std::memory_order_release);
+  totalFramesRead_.store(0, std::memory_order_release);
   underrunCount_ = 0;
   ioProcCallCount_ = 0;
   overrunSampleCount_.store(0, std::memory_order_relaxed);
@@ -625,34 +552,12 @@ OSStatus ProxyDevice::GetZeroTimeStampImpl(UInt32 clientID,
                                            Float64* outSampleTime,
                                            UInt64* outHostTime,
                                            UInt64* outSeed) {
-  const UInt64 seed = zeroTimeStampSeed_.load(std::memory_order_acquire);
-  const UInt64 anchor =
-      zeroTimeStampAnchorHostTime_.load(std::memory_order_acquire);
-  const UInt64 readTime =
-      lastTargetReadHostTime_.load(std::memory_order_acquire);
+  const auto zts = zts_.load(std::memory_order_acquire);
 
-  const Float64 ticksPerPeriod =
-      hostTicksPerFrame_ * static_cast<Float64>(kProxyZeroTimeStampPeriod);
-
-  UInt64 counter = zeroTimeStampPeriodCounter_.load(std::memory_order_relaxed);
-  // A GetZeroTimeStamp request may arrive several periods after the prior
-  // one. Advance all elapsed periods so the fixed-rate timeline never leaves
-  // CoreAudio attempting to catch up with stale timestamps.
-  while (ticksPerPeriod > 0.0) {
-    const UInt64 nextPeriodHostTime =
-        anchor +
-        static_cast<UInt64>(static_cast<Float64>(counter + 1) * ticksPerPeriod);
-    if (readTime < nextPeriodHostTime) {
-      break;
-    }
-    ++counter;
-  }
-  zeroTimeStampPeriodCounter_.store(counter, std::memory_order_relaxed);
-
-  *outSampleTime = static_cast<Float64>(counter * kProxyZeroTimeStampPeriod);
-  *outHostTime = anchor + static_cast<UInt64>(static_cast<Float64>(counter) *
-                                              ticksPerPeriod);
-  *outSeed = seed;
+  *outSampleTime = static_cast<Float64>(zts.zeroTimestampPeriodIndex_ *
+                                        kProxyZeroTimeStampPeriod);
+  *outHostTime = zts.readTimestamp_;
+  *outSeed = 1;
 
   return kAudioHardwareNoError;
 }
@@ -746,6 +651,7 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
   // Fill every output buffer from the ring buffer. If an underrun occurs,
   // pad the remainder with silence.
   UInt32 underrunSamplesThisCall = 0;
+  UInt64 framesReadThisCall = 0;
   for (UInt32 i = 0; i < outOutputData->mNumberBuffers; i++) {
     auto& buf = outOutputData->mBuffers[i];
     auto* dest = static_cast<Float32*>(buf.mData);
@@ -758,6 +664,21 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
              (samplesNeeded - samplesRead) * sizeof(Float32));
       underrunSamplesThisCall += samplesNeeded - samplesRead;
     }
+
+    framesReadThisCall += samplesNeeded / self->outputChannelsPerFrame_;
+  }
+
+  // Add atomically and store.
+  const auto oldTotalFramesRead =
+      self->totalFramesRead_.fetch_add(framesReadThisCall);
+  const auto newTotalFramesRead = oldTotalFramesRead + framesReadThisCall;
+
+  // If we have rolled over a whole buffer ZTS period, save the new ZTS.
+  if (newTotalFramesRead / kProxyZeroTimeStampPeriod !=
+      oldTotalFramesRead / kProxyZeroTimeStampPeriod) {
+    self->zts_.store({.readTimestamp_ = readHostTime,
+                      .zeroTimestampPeriodIndex_ = newTotalFramesRead},
+                     std::memory_order_release);
   }
 
   if (underrunSamplesThisCall > 0) {
@@ -772,28 +693,6 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
                     self->ringBuffer_->GetCount(),
                     self->ringBuffer_->GetCapacity());
     }
-  }
-
-  // Publish the read time after completing the read. The first published
-  // value switches GetZeroTimeStamp to this timebase, so change the seed once
-  // to make the HAL discard timestamps from the startup timebase.
-  const bool isFirstRead =
-      !self->hasTargetReadTime_.load(std::memory_order_acquire);
-  self->lastTargetReadHostTime_.store(readHostTime, std::memory_order_release);
-  if (isFirstRead) {
-    self->zeroTimeStampSeed_.fetch_add(1, std::memory_order_release);
-    self->hasTargetReadTime_.store(true, std::memory_order_release);
-
-    ProxyAudio::Tracer::FromTracer(self->GetContext()->Tracer)
-        ->Message(ProxyAudio::Tracer::Info,
-                  "ProxyDevice::TargetIOProc() Clock read snapshot: "
-                  "anchorHost=%llu, firstReadHost=%llu, seed=%llu",
-                  static_cast<unsigned long long>(
-                      self->zeroTimeStampAnchorHostTime_.load(
-                          std::memory_order_relaxed)),
-                  static_cast<unsigned long long>(readHostTime),
-                  static_cast<unsigned long long>(self->zeroTimeStampSeed_.load(
-                      std::memory_order_relaxed)));
   }
 
   // Periodically log overall streaming health.
@@ -881,10 +780,7 @@ OSStatus ProxyDevice::ApplySampleRateChange(Float64 value,
     // Samples and timestamps from the old rate must not cross into the new
     // target format. The HAL performs the corresponding stop/start cycle.
     targetIORunning_.store(false, std::memory_order_release);
-    zeroTimeStampAnchorHostTime_.store(0, std::memory_order_relaxed);
-    lastTargetReadHostTime_.store(0, std::memory_order_relaxed);
-    hasTargetReadTime_.store(false, std::memory_order_relaxed);
-    zeroTimeStampPeriodCounter_.store(0, std::memory_order_relaxed);
+    zts_.store({}, std::memory_order_release);
 
     RemoveStreams();
 
