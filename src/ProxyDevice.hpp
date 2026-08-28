@@ -98,6 +98,13 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
                                 UInt64* outHostTime,
                                 UInt64* outSeed) override;
 
+  // The proxy owns the mixed-output path. Do not rely on libASPL's deferred
+  // stream-count bookkeeping when HAL asks whether it should run that path.
+  OSStatus WillDoIOOperationImpl(UInt32 clientID,
+                                 UInt32 operationID,
+                                 Boolean* outWillDo,
+                                 Boolean* outWillDoInPlace) override;
+
  protected:
   // Adds all streams from the target device to the proxy device
   // as proxy streams.
@@ -146,6 +153,10 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
   // Whether the target device IOProc is actively streaming. Checked by both
   // the producer and consumer to gate ring buffer access.
   std::atomic<bool> targetIORunning_{false};
+
+  // Identifies the active target-I/O session. A delayed AudioDeviceStart()
+  // result from an old session must not change the state of a new one.
+  std::atomic<UInt64> targetIOGeneration_{0};
 
   // Number of interleaved channels per frame for the current output format.
   UInt32 outputChannelsPerFrame_ = 0;

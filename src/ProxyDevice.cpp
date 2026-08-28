@@ -15,6 +15,7 @@
 
 #include "AudioObjectUtils.hpp"
 #include "CommonProperties.hpp"
+#include "Dispatch.hpp"
 #include "Error.hpp"
 #include "ProxyMuteControl.hpp"
 #include "ProxyStream.hpp"
@@ -26,10 +27,7 @@
 
 namespace ProxyAudio {
 
-// Number of audio frames the ring buffer can hold. This must be meaningfully
-// larger than (prebufferFrames + largest HAL write burst + one consumer cycle)
-// or the buffer will oscillate between full and empty, producing simultaneous
-// overruns and underruns. At 4 channels and 48 kHz, 8192 frames ≈ 170 ms.
+// Number of audio frames the ring buffer can hold.
 static constexpr UInt32 kRingBufferFrameCount = 8192;
 
 // This is the period advertised by the proxy and used to model its clock.
@@ -109,6 +107,7 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
         .SampleRate = GetDeviceSampleRateProperty(targetDeviceID),
         .Latency = latencyWithBuffer,
         .ZeroTimeStampPeriod = kProxyZeroTimeStampPeriod,
+        .EnableMixing = true,
     };
 
     ProxyAudio::Tracer::FromTracer(context->Tracer)
@@ -433,11 +432,9 @@ OSStatus ProxyDevice::OnStartIO() {
     return kAudioHardwareNotRunningError;
   }
 
-  // Anchor the local timeline and seed its first read-time snapshot at I/O
-  // start, matching NullAudio. TargetIOProc will shortly overwrite this
-  // snapshot with the first real target read and then advance the seed.
+  // This is a temporary clock origin until the target invokes its first I/O
+  // callback. TargetIOProc then publishes the real sample-time-zero anchor.
   const UInt64 startHostTime = mach_absolute_time();
-  // Temporary, will be overwritten in the first read IO call.
   zts_.store({.readTimestamp_ = startHostTime, .zeroTimestampPeriodIndex_ = 0},
              std::memory_order_release);
   totalFramesRead_.store(0, std::memory_order_release);
@@ -478,23 +475,46 @@ OSStatus ProxyDevice::OnStartIO() {
   // invoke TargetIOProc before it returns.
   targetIORunning_.store(true, std::memory_order_release);
 
-  // Start the IOProc -- the target device will begin calling TargetIOProc.
-  status = AudioDeviceStart(GetTargetObjectID(), ioProcID_);
-  if (status != noErr) {
-    tracer->Message(Tracer::Error,
-                    "ProxyDevice::OnStartIO() AudioDeviceStart failed: %d",
-                    static_cast<int>(status));
-    AudioDeviceDestroyIOProcID(GetTargetObjectID(), ioProcID_);
-    ioProcID_ = nullptr;
-    targetIORunning_.store(false, std::memory_order_release);
-    ringBuffer_.reset();
-    return status;
-  }
+  // AudioDeviceStart() can block while the target I/O is active. Calling it
+  // inline from StartIO holds up HAL's own I/O startup, preventing it from
+  // ever issuing WriteMix to this proxy. Start the target on a worker instead
+  // and return immediately so HAL can begin its render cycle.
+  const auto generation =
+      targetIOGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  const auto targetDeviceID = GetTargetObjectID();
+  const auto ioProcID = ioProcID_;
+  const auto self = std::static_pointer_cast<ProxyDevice>(shared_from_this());
+  ProxyAudio::DispatchAsync(^() {
+    auto startTracer =
+        ProxyAudio::Tracer::FromTracer(self->GetContext()->Tracer);
+    startTracer->Message(Tracer::Info,
+                         "ProxyDevice::TargetIOStartTask() Starting target "
+                         "IOProc on device %u",
+                         targetDeviceID);
+
+    const OSStatus startStatus = AudioDeviceStart(targetDeviceID, ioProcID);
+    if (startStatus != noErr) {
+      startTracer->Message(
+          Tracer::Error,
+          "ProxyDevice::TargetIOStartTask() AudioDeviceStart returned: %d",
+          static_cast<int>(startStatus));
+      if (self->targetIOGeneration_.load(std::memory_order_acquire) ==
+          generation) {
+        self->targetIORunning_.store(false, std::memory_order_release);
+      }
+      return;
+    }
+
+    startTracer->Message(Tracer::Info,
+                         "ProxyDevice::TargetIOStartTask() AudioDeviceStart "
+                         "returned for device %u",
+                         targetDeviceID);
+  });
 
   tracer->Message(Tracer::Info,
-                  "ProxyDevice::OnStartIO() Target IOProc started on "
+                  "ProxyDevice::OnStartIO() Target IOProc start queued on "
                   "device %u",
-                  GetTargetObjectID());
+                  targetDeviceID);
   return kAudioHardwareNoError;
 }
 
@@ -504,6 +524,7 @@ void ProxyDevice::OnStopIO() {
 
   // Signal both the producer and consumer to stop accessing the ring buffer.
   targetIORunning_.store(false, std::memory_order_release);
+  targetIOGeneration_.fetch_add(1, std::memory_order_acq_rel);
 
   if (ioProcID_ != nullptr) {
     // AudioDeviceStop is synchronous -- after it returns the IOProc is
@@ -560,6 +581,27 @@ OSStatus ProxyDevice::GetZeroTimeStampImpl(UInt32 clientID,
   *outSeed = 1;
 
   return kAudioHardwareNoError;
+}
+
+OSStatus ProxyDevice::WillDoIOOperationImpl(UInt32 clientID,
+                                            UInt32 operationID,
+                                            Boolean* outWillDo,
+                                            Boolean* outWillDoInPlace) {
+  switch (operationID) {
+    case kAudioServerPlugInIOOperationProcessMix:
+    case kAudioServerPlugInIOOperationWriteMix:
+      // AddStreamAsync() exposes the stream synchronously but updates
+      // libASPL's numOutputStreams_ counter in a later configuration change.
+      // The proxy must accept the mix path as soon as its output stream is
+      // visible to HAL, otherwise HAL never calls OnWriteMixedOutput().
+      *outWillDo = true;
+      *outWillDoInPlace = true;
+      return kAudioHardwareNoError;
+
+    default:
+      return aspl::Device::WillDoIOOperationImpl(clientID, operationID,
+                                                 outWillDo, outWillDoInPlace);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -634,9 +676,8 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
 
   ++self->ioProcCallCount_;
 
-  // Snapshot the local clock at the point we read from the ring buffer. Do
-  // not use inInputTime or inOutputTime: those timestamps describe the target
-  // device's timebase, while the proxy's ZeroTimeStamp has its own timebase.
+  // The target callback supplies the proxy clock's host-time source. Its
+  // AudioTimeStamps belong to the target timebase, so use the local host clock.
   const UInt64 readHostTime = mach_absolute_time();
 
   // Track ring fill extremes before we read anything, for diagnostics.
@@ -668,16 +709,28 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
     framesReadThisCall += samplesNeeded / self->outputChannelsPerFrame_;
   }
 
-  // Add atomically and store.
+  // Count the frames the target just consumed. The first target callback is
+  // the real sample-time-zero anchor. Without this update, the delay between
+  // OnStartIO() and the first target callback is incorrectly included in the
+  // first period, making the published clock appear slower than its nominal
+  // sample rate.
   const auto oldTotalFramesRead =
       self->totalFramesRead_.fetch_add(framesReadThisCall);
   const auto newTotalFramesRead = oldTotalFramesRead + framesReadThisCall;
+  if (oldTotalFramesRead == 0 && framesReadThisCall != 0) {
+    self->zts_.store(
+        {.readTimestamp_ = readHostTime, .zeroTimestampPeriodIndex_ = 0},
+        std::memory_order_release);
+  }
 
-  // If we have rolled over a whole buffer ZTS period, save the new ZTS.
-  if (newTotalFramesRead / kProxyZeroTimeStampPeriod !=
-      oldTotalFramesRead / kProxyZeroTimeStampPeriod) {
+  // Publish one zero timestamp for each completed period. The stored value is
+  // a period index, not a frame count: GetZeroTimeStampImpl() multiplies it by
+  // kProxyZeroTimeStampPeriod to form outSampleTime.
+  const auto oldPeriodIndex = oldTotalFramesRead / kProxyZeroTimeStampPeriod;
+  const auto newPeriodIndex = newTotalFramesRead / kProxyZeroTimeStampPeriod;
+  if (newPeriodIndex != oldPeriodIndex) {
     self->zts_.store({.readTimestamp_ = readHostTime,
-                      .zeroTimestampPeriodIndex_ = newTotalFramesRead},
+                      .zeroTimestampPeriodIndex_ = newPeriodIndex},
                      std::memory_order_release);
   }
 
