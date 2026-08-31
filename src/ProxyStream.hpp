@@ -53,6 +53,10 @@ class ProxyStream : public ProxyObject<ProxyStream> {
 
   virtual ~ProxyStream() = default;
 
+  // Refresh the cached stream format and latency from the target. This is
+  // called while HAL has stopped I/O for a device configuration change.
+  OSStatus RefreshFromTarget();
+
  protected:
 };
 

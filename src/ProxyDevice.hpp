@@ -113,15 +113,13 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
   // Remove all streams from the proxy device.
   void RemoveStreams();
 
-  // Perform a sample rate change, recreating all streams with the new sample
-  // rate after the target device changes. This is called via
-  // RequestConfigurationChange.
-  void PerformSampleRateChange(const Float64& value);
+  // Refresh existing proxy stream formats from the target. Returns false if
+  // the target stream topology changed and the streams must be rebuilt.
+  bool RefreshProxyStreams();
 
-  // Applies a rate change in either direction. A system request needs to set
-  // the target device first; a target property notification is already at the
-  // requested rate and only needs to refresh the proxy.
-  OSStatus ApplySampleRateChange(Float64 value, bool setTargetSampleRate);
+  // Applies a rate change while HAL has stopped I/O for a configuration
+  // change. Existing streams are refreshed in place when possible.
+  OSStatus ApplySampleRateChange(Float64 value);
 
   // Propagate system-initiated proxy rate changes to the target before
   // refreshing streams from its new format.

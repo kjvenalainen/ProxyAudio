@@ -162,8 +162,18 @@ ProxyDevice::ProxyDevice(private_tag,
             if (sampleRateChangeInProgress_.load(std::memory_order_acquire)) {
               return;
             }
-            RequestConfigurationChange(
-                [this, value]() { PerformSampleRateChange(value); });
+
+            // Follow the same path as a client changing the proxy rate. This
+            // asks HAL to stop I/O and invokes SetNominalSampleRateImpl only
+            // from PerformConfigurationChange.
+            const OSStatus status = SetNominalSampleRateAsync(value);
+            if (status != noErr) {
+              ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+                  ->Message(ProxyAudio::Tracer::Error,
+                            "ProxyDevice:sampleRateProxy_() Failed to request "
+                            "sample rate %.0f: %d",
+                            value, static_cast<int>(status));
+            }
           },
           [this]() { return this->GetNominalSampleRate(); }) {
   ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
@@ -200,8 +210,8 @@ ProxyDevice::ProxyDevice(private_tag,
   }
 
   // The constructor only initializes the proxy's cached value. Do not use the
-  // override here: it is reserved for system-initiated changes and rebuilds
-  // streams after it has updated the target device.
+  // override here: it is reserved for HAL-approved configuration changes and
+  // refreshes streams after the target device has reached the new rate.
   status = aspl::Device::SetNominalSampleRateImpl(sampleRateProxy_.GetValue());
   if (status != noErr) {
     ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
@@ -394,6 +404,39 @@ void ProxyDevice::RemoveStreams() {
     if (muteControl) {
       RemoveMuteControlAsync(muteControl);
     }
+  }
+}
+
+bool ProxyDevice::RefreshProxyStreams() {
+  try {
+    const auto targetStreamIDs =
+        ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
+            GetTargetObjectID(),
+            {
+                .mSelector = kAudioDevicePropertyStreams,
+                .mScope = kAudioObjectPropertyScopeOutput,
+                .mElement = kAudioObjectPropertyElementMain,
+            },
+            {});
+
+    if (targetStreamIDs.size() !=
+        GetStreamCount(aspl::Direction::Output)) {
+      return false;
+    }
+
+    for (size_t index = 0; index < targetStreamIDs.size(); ++index) {
+      auto stream = std::dynamic_pointer_cast<ProxyStream>(
+          GetStreamByIndex(aspl::Direction::Output,
+                           static_cast<UInt32>(index)));
+      if (!stream || stream->GetTargetObjectID() != targetStreamIDs[index] ||
+          stream->RefreshFromTarget() != noErr) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (...) {
+    return false;
   }
 }
 
@@ -787,34 +830,16 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
 // Configuration
 // ---------------------------------------------------------------------------
 
-void ProxyDevice::PerformSampleRateChange(const Float64& value) {
-  auto tracer = ProxyAudio::Tracer::FromTracer(GetContext()->Tracer);
-  tracer->Message(ProxyAudio::Tracer::Info,
-                  "ProxyDevice:PerformSampleRateChange() Device sample rate "
-                  "changed to %f",
-                  value);
-
-  const OSStatus status = ApplySampleRateChange(value, false);
-  if (status != noErr) {
-    tracer->Message(ProxyAudio::Tracer::Error,
-                    "ProxyDevice:PerformSampleRateChange() Failed during "
-                    "reconfiguration: %d",
-                    static_cast<int>(status));
-  }
-}
-
 OSStatus ProxyDevice::SetNominalSampleRateImpl(Float64 rate) {
-  // This is invoked by the HAL when it changes the proxy device's nominal
-  // rate. Set the target first so the proxy's device and stream formats stay
-  // in lockstep with the hardware it feeds.
-  return ApplySampleRateChange(rate, true);
+  // SetNominalSampleRateAsync arranges for this to run from HAL's
+  // PerformConfigurationChange callback, after outstanding I/O has stopped.
+  return ApplySampleRateChange(rate);
 }
 
-OSStatus ProxyDevice::ApplySampleRateChange(Float64 value,
-                                            bool setTargetSampleRate) {
+OSStatus ProxyDevice::ApplySampleRateChange(Float64 value) {
   // A target change notification can be delivered synchronously while we set
   // its property. It describes the same transition, so only the outer change
-  // performs the stream rebuild.
+  // applies the new device and stream state.
   if (sampleRateChangeInProgress_.exchange(true, std::memory_order_acq_rel)) {
     return aspl::Device::SetNominalSampleRateImpl(value);
   }
@@ -824,7 +849,10 @@ OSStatus ProxyDevice::ApplySampleRateChange(Float64 value,
   };
 
   try {
-    if (setTargetSampleRate && sampleRateProxy_.GetValue() != value) {
+    // A client may have changed the proxy rate, in which case the target must
+    // be changed first. For a target property notification it is already at
+    // the requested rate and this is a no-op.
+    if (sampleRateProxy_.GetValue() != value) {
       sampleRateProxy_.SetValue(value);
       if (sampleRateProxy_.GetValue() != value) {
         clearInProgress();
@@ -837,16 +865,23 @@ OSStatus ProxyDevice::ApplySampleRateChange(Float64 value,
     targetIORunning_.store(false, std::memory_order_release);
     zts_.store({}, std::memory_order_release);
 
-    RemoveStreams();
-
     const OSStatus status = aspl::Device::SetNominalSampleRateImpl(value);
-    if (status == noErr) {
+
+    if (status == noErr && !RefreshProxyStreams()) {
+      // A nominal-rate change normally leaves stream identity and topology
+      // intact, as in NullAudio. Rebuild only when the target actually changed
+      // its stream list or immutable stream parameters.
+      ProxyAudio::Tracer::FromTracer(GetContext()->Tracer)
+          ->Message(ProxyAudio::Tracer::Info,
+                    "ProxyDevice:ApplySampleRateChange() Target stream "
+                    "topology changed; rebuilding proxy streams");
+      RemoveStreams();
       AddProxyStreams();
-      NotifyPropertiesChanged({
-          kAudioDevicePropertyNominalSampleRate,
-          kAudioDevicePropertyStreams,
-      });
     }
+
+    // Do not call PropertiesChanged here. HAL compares the device and stream
+    // properties after PerformConfigurationChange returns, just as NullAudio
+    // relies on it to publish nominal-rate and stream-format changes.
 
     clearInProgress();
     return status;

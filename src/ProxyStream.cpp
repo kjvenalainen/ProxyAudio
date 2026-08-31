@@ -59,4 +59,28 @@ ProxyStream::ProxyStream(const AudioObjectID targetObjectID,
                 targetObjectID);
 }
 
+OSStatus ProxyStream::RefreshFromTarget() {
+  const auto parameters = GetParameters(GetTargetObjectID(), GetContext());
+
+  // Direction and starting channel are immutable Stream parameters. A change
+  // to either means this is no longer the same stream topology and the device
+  // must rebuild its proxy streams instead.
+  if (parameters.Direction != GetDirection() ||
+      parameters.StartingChannel != GetStartingChannel()) {
+    return kAudioHardwareUnsupportedOperationError;
+  }
+
+  auto status = SetLatencyImpl(parameters.Latency);
+  if (status != noErr) {
+    return status;
+  }
+
+  status = SetPhysicalFormatImpl(parameters.Format);
+  if (status != noErr) {
+    return status;
+  }
+
+  return SetVirtualFormatImpl(parameters.Format);
+}
+
 }  // namespace ProxyAudio
