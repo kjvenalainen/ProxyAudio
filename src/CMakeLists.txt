@@ -56,6 +56,7 @@ add_library(${DRIVER_NAME} MODULE
   "CommonProperties.cpp"
   "Dispatch.cpp"
   "Driver.cpp"
+  "MuteControl.cpp"
   "ProxyDevice.cpp"
   "ProxyMuteControl.cpp"
   "ProxyStream.cpp"

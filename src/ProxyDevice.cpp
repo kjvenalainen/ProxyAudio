@@ -17,6 +17,7 @@
 #include "CommonProperties.hpp"
 #include "Dispatch.hpp"
 #include "Error.hpp"
+#include "MuteControl.hpp"
 #include "ProxyMuteControl.hpp"
 #include "ProxyStream.hpp"
 #include "ProxyVolumeControl.hpp"
@@ -328,10 +329,11 @@ void ProxyDevice::AddProxyStreams() {
                     "stream: %u",
                     streamID);
 
-      // TODO: Load last mute state from storage.
-      auto mute = std::make_shared<aspl::MuteControl>(
-          GetContext(), aspl::MuteControlParameters{
+      auto mute = std::make_shared<MuteControl>(
+          GetContext(), MuteControlParameters{
                             .Scope = kAudioObjectPropertyScopeOutput,
+                            .StorageKey = "MUTE_" + GetDeviceUID() + "_" +
+                                          std::to_string(streamID),
                         });
       AddMuteControlAsync(mute);
       stream->AttachMuteControl(std::move(mute));
