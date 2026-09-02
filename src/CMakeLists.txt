@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.12.0)
 
 project(ProxyAudio CXX)
 
+option(BUILD_TESTING "Build ProxyAudio unit tests" OFF)
+
 # set compiler options
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -56,6 +58,7 @@ add_library(${DRIVER_NAME} MODULE
   "CommonProperties.cpp"
   "Dispatch.cpp"
   "Driver.cpp"
+  "HostTime.cpp"
   "MuteControl.cpp"
   "ProxyDevice.cpp"
   "ProxyMuteControl.cpp"
@@ -146,6 +149,62 @@ if(NOT CODESIGN_ID STREQUAL "")
     codesign --force -s "${CODESIGN_ID}"
     "${CMAKE_CURRENT_BINARY_DIR}/${DRIVER_NAME}.driver"
   )
+endif()
+
+if(BUILD_TESTING)
+  set(TEST_NAME "proxy_audio_tests")
+  set(GTEST_TARGET "ProxyAudio_googletest")
+
+  ExternalProject_Add(${GTEST_TARGET}
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG release-1.12.1
+    GIT_SHALLOW ON
+    UPDATE_DISCONNECTED 1
+    SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/googletest-src
+    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/googletest-build
+    INSTALL_COMMAND ""
+    TEST_COMMAND ""
+    LOG_DOWNLOAD YES
+    LOG_CONFIGURE YES
+    LOG_BUILD YES
+  )
+
+  add_executable(${TEST_NAME}
+    "CommonProperties.cpp"
+    "MuteControl.cpp"
+    "ProxyDevice.cpp"
+    "ProxyMuteControl.cpp"
+    "ProxyStream.cpp"
+    "ProxyVolumeControl.cpp"
+    "Utils.cpp"
+    "VolumeControl.cpp"
+    "../test/DeviceTest.cpp"
+    "../test/DriverScenarioTest.cpp"
+    "../test/IOTest.cpp"
+    "../test/Main.cpp"
+    "../test/PropertyControlTest.cpp"
+    "../test/RingBufferTest.cpp"
+    "../test/TestSupport.cpp"
+  )
+
+  add_dependencies(${TEST_NAME} ${LIBASPL_TARGET} ${GTEST_TARGET})
+  target_compile_options(${TEST_NAME} PRIVATE -fblocks)
+  target_include_directories(${TEST_NAME}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../test
+    PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/libASPL-prefix/include
+    SYSTEM PRIVATE
+      ${CMAKE_CURRENT_BINARY_DIR}/googletest-src/googletest/include
+  )
+  target_link_libraries(${TEST_NAME}
+    PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/libASPL-prefix/lib/libASPL.a
+    PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/googletest-build/lib/libgtest.a
+    PRIVATE ${LIB_CoreFoundation}
+    PRIVATE ${LIB_CoreAudio}
+  )
+
+  enable_testing()
+  add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endif()
 
 # install the driver bundle

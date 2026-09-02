@@ -44,6 +44,21 @@ debug: debug_cmake
 	python3 script/fix_compile_commands_paths.py compile_commands.json .
 	bash script/writeLatestBuildLink.sh Debug
 
+# Deterministic unit tests. Building this target does not build, sign, install,
+# or load the HAL driver bundle.
+.PHONY: test test_cmake
+test_cmake:
+	mkdir -p build/ProxyAudio/Test
+	cd build/ProxyAudio/Test && $(CMAKE) $(CMAKE_ARGS) \
+		-DCMAKE_BUILD_TYPE=Debug \
+		-DBUILD_TESTING=ON \
+		-DCODESIGN_ID= \
+		../../../src
+
+test: test_cmake
+	$(CMAKE) --build build/ProxyAudio/Test --target proxy_audio_tests -j$(NUM_CPU)
+	ctest --test-dir build/ProxyAudio/Test --output-on-failure --verbose
+
 # Clean build artifacts
 clean:
 	rm -rf build

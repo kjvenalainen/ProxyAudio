@@ -202,8 +202,6 @@ class DriverHandler : public aspl::DriverRequestHandler {
                          deviceID, context));
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
         for (auto& future : proxyDevicesFutures) {
           auto proxyDevice = future.get();
           if (proxyDevice) {

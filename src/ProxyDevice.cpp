@@ -6,7 +6,6 @@
 #include <CoreAudio/AudioHardware.h>
 #include <CoreFoundation/CFBundle.h>
 #include <MacTypes.h>
-#include <mach/mach_time.h>
 
 #include <atomic>
 #include <cstdint>
@@ -17,6 +16,7 @@
 #include "CommonProperties.hpp"
 #include "Dispatch.hpp"
 #include "Error.hpp"
+#include "HostTime.hpp"
 #include "MuteControl.hpp"
 #include "ProxyMuteControl.hpp"
 #include "ProxyStream.hpp"
@@ -351,8 +351,10 @@ void ProxyDevice::AddProxyStreams() {
   }
 
   // Proxy device handles its own I/O and control requests.
-  SetIOHandler(std::static_pointer_cast<ProxyDevice>(shared_from_this()));
-  SetControlHandler(std::static_pointer_cast<ProxyDevice>(shared_from_this()));
+  // The device owns these handler roles itself. Use the non-owning overloads
+  // so the handler slots do not form a shared_ptr cycle back to this device.
+  SetIOHandler(this);
+  SetControlHandler(this);
 }
 
 void ProxyDevice::RemoveStreams() {
@@ -479,7 +481,7 @@ OSStatus ProxyDevice::OnStartIO() {
 
   // This is a temporary clock origin until the target invokes its first I/O
   // callback. TargetIOProc then publishes the real sample-time-zero anchor.
-  const UInt64 startHostTime = mach_absolute_time();
+  const UInt64 startHostTime = CurrentHostTime();
   zts_.store({.readTimestamp_ = startHostTime, .zeroTimestampPeriodIndex_ = 0},
              std::memory_order_release);
   totalFramesRead_.store(0, std::memory_order_release);
@@ -723,7 +725,7 @@ OSStatus ProxyDevice::TargetIOProc(AudioObjectID inDevice,
 
   // The target callback supplies the proxy clock's host-time source. Its
   // AudioTimeStamps belong to the target timebase, so use the local host clock.
-  const UInt64 readHostTime = mach_absolute_time();
+  const UInt64 readHostTime = CurrentHostTime();
 
   // Track ring fill extremes before we read anything, for diagnostics.
   {

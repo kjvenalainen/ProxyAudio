@@ -19,6 +19,10 @@
 
 namespace ProxyAudio {
 
+namespace Test {
+class ProxyDeviceTestAccess;
+}
+
 struct ZeroTimestamp {
   // Host-based timestamp of the last time the read(s) looped over the virtual
   // ring buffer.
@@ -59,6 +63,7 @@ class ProxyDevice : public ProxyObject<ProxyDevice>,
                     public aspl::IORequestHandler,
                     public aspl::ControlRequestHandler {
   friend struct ProxyObject<ProxyDevice>;
+  friend class Test::ProxyDeviceTestAccess;
 
   struct private_tag {};
 

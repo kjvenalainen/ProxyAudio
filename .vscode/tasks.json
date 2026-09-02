@@ -29,6 +29,23 @@
       }
     },
     {
+      "label": "Run unit tests",
+      "type": "shell",
+      "command": "make",
+      "args": [
+        "test"
+      ],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
       "label": "Clean",
       "type": "shell",
       "command": "make",
