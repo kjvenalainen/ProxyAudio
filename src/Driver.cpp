@@ -8,11 +8,15 @@
 // available when libASPL's DoubleBuffer.hpp is parsed (it uses std::is_trivial
 // without including it)
 #include <aspl/Driver.hpp>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <future>
 #include <memory>
+#include <string>
 
 #include "AudioObjectUtils.hpp"
+#include "CFUtils.hpp"
 #include "CommonProperties.hpp"
 #include "Dispatch.hpp"
 #include "Error.hpp"
@@ -31,14 +35,144 @@ constexpr UInt32 SineFrequency = 500;
 constexpr UInt32 SampleRate = 44100;
 constexpr UInt32 ChannelCount = 2;
 
+// The manager reads this read-only property from the AudioPlugIn object after
+// resolving it by bundle identifier. It deliberately returns a property list,
+// rather than a bare version string, so the protocol can evolve safely.
+constexpr AudioObjectPropertySelector DriverVersionProperty = 'VRSN';
+constexpr char DriverStatusStorageKey[] =
+    "com.tapturtle.proxyaudio.driver-status.v1";
+constexpr SInt64 DriverStatusSchemaVersion = 1;
+constexpr SInt64 DriverStatusProtocolVersion = 1;
+
+class DriverStatus {
+ public:
+  DriverStatus()
+      : instanceID_(CreateInstanceID()), startedAtUnixMs_(CurrentUnixMs()) {}
+
+  // The returned property list follows the Core Foundation Create Rule. The
+  // caller (libASPL) owns it and releases it after sending it to the client.
+  CFPropertyListRef CreatePropertyList() const {
+    auto* status = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                                             &kCFTypeDictionaryKeyCallBacks,
+                                             &kCFTypeDictionaryValueCallBacks);
+    if (!status) {
+      return nullptr;
+    }
+
+    SetInteger(status, CFSTR("schemaVersion"), DriverStatusSchemaVersion);
+    SetInteger(status, CFSTR("protocolVersion"), DriverStatusProtocolVersion);
+    SetString(status, CFSTR("bundleIdentifier"), PROXY_AUDIO_DRIVER_IDENTIFIER);
+    SetString(status, CFSTR("driverVersion"), PROXY_AUDIO_DRIVER_VERSION);
+    SetString(status, CFSTR("buildVersion"), PROXY_AUDIO_DRIVER_BUILD_VERSION);
+    SetString(status, CFSTR("instanceID"), instanceID_);
+    SetInteger(status, CFSTR("startedAtUnixMs"), startedAtUnixMs_);
+    CFDictionarySetValue(status, CFSTR("live"),
+                         initialized_.load(std::memory_order_acquire)
+                             ? kCFBooleanTrue
+                             : kCFBooleanFalse);
+    CFDictionarySetValue(status, CFSTR("state"),
+                         initialized_.load(std::memory_order_acquire)
+                             ? CFSTR("ready")
+                             : CFSTR("initializing"));
+
+    const void* capabilities[] = {CFSTR("status-v1")};
+    auto* capabilityList = CFArrayCreate(kCFAllocatorDefault, capabilities, 1,
+                                         &kCFTypeArrayCallBacks);
+    if (capabilityList) {
+      CFDictionarySetValue(status, CFSTR("capabilities"), capabilityList);
+      CFRelease(capabilityList);
+    }
+
+    return status;
+  }
+
+  void MarkInitialized() {
+    initialized_.store(true, std::memory_order_release);
+  }
+
+  bool WriteToStorage(const std::shared_ptr<aspl::Storage>& storage) const {
+    const auto status = CreatePropertyList();
+    if (!status) {
+      return false;
+    }
+
+    const auto didWrite = storage->WriteCustom(DriverStatusStorageKey, status);
+    CFRelease(status);
+    return didWrite;
+  }
+
+ private:
+  static std::string CreateInstanceID() {
+    auto* uuid = CFUUIDCreate(kCFAllocatorDefault);
+    if (!uuid) {
+      return "";
+    }
+
+    auto* string = CFUUIDCreateString(kCFAllocatorDefault, uuid);
+    CFRelease(uuid);
+    if (!string) {
+      return "";
+    }
+
+    const auto result = ProxyAudio::StringFromCFStringRef(string);
+    CFRelease(string);
+    return result;
+  }
+
+  static SInt64 CurrentUnixMs() {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+  }
+
+  static void SetInteger(CFMutableDictionaryRef dictionary,
+                         CFStringRef key,
+                         SInt64 value) {
+    auto* number =
+        CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &value);
+    if (number) {
+      CFDictionarySetValue(dictionary, key, number);
+      CFRelease(number);
+    }
+  }
+
+  static void SetString(CFMutableDictionaryRef dictionary,
+                        CFStringRef key,
+                        const std::string& value) {
+    auto* string = CFStringCreateWithCString(kCFAllocatorDefault, value.c_str(),
+                                             kCFStringEncodingUTF8);
+    if (string) {
+      CFDictionarySetValue(dictionary, key, string);
+      CFRelease(string);
+    }
+  }
+
+  const std::string instanceID_;
+  const SInt64 startedAtUnixMs_;
+  std::atomic<bool> initialized_{false};
+};
+
 class DriverHandler : public aspl::DriverRequestHandler {
  public:
   DriverHandler(std::shared_ptr<aspl::Context> context,
-                std::shared_ptr<aspl::Plugin> plugin)
-      : context_(context), plugin_(plugin), onSystemAudioDevicesChanged_() {}
+                std::shared_ptr<aspl::Plugin> plugin,
+                std::shared_ptr<aspl::Storage> storage,
+                std::shared_ptr<DriverStatus> driverStatus)
+      : context_(context),
+        plugin_(plugin),
+        storage_(storage),
+        driverStatus_(driverStatus),
+        onSystemAudioDevicesChanged_() {}
 
   // Invoked when HAL performs asynchrnous initialization.
   OSStatus OnInitialize() override {
+    driverStatus_->MarkInitialized();
+    if (!driverStatus_->WriteToStorage(storage_)) {
+      ProxyAudio::Tracer::FromTracer(context_->Tracer)
+          ->Message(ProxyAudio::Tracer::Warn,
+                    "DriverHandler:OnInitialize() Failed to write driver "
+                    "status to storage");
+    }
+
     // Asynchronously add devices to the plugin. In this method the HAL is
     // holding various locks that would cause a long delay if we were to do this
     // synchronously.
@@ -260,6 +394,8 @@ class DriverHandler : public aspl::DriverRequestHandler {
 
   std::shared_ptr<aspl::Context> context_;
   std::shared_ptr<aspl::Plugin> plugin_;
+  std::shared_ptr<aspl::Storage> storage_;
+  std::shared_ptr<DriverStatus> driverStatus_;
   std::unique_ptr<ProxyAudio::PropertyChangedNotifier>
       onSystemAudioDevicesChanged_;
 };
@@ -275,12 +411,18 @@ std::shared_ptr<aspl::Driver> CreateProxyAudioDriver() {
   // Create plugin object, the root of the object hierarchy. Don't add any
   // devices yet.
   auto plugin = std::make_shared<aspl::Plugin>(context);
+  auto driverStatus = std::make_shared<DriverStatus>();
+  plugin->RegisterCustomProperty(DriverVersionProperty,
+                                 [driverStatus]() -> CFPropertyListRef {
+                                   return driverStatus->CreatePropertyList();
+                                 });
 
   // Create driver, the top-level entry point.
   // Driver owns plugin object and thus the whole object hierarchy,
   // and provides C interface for HAL.
   auto driver = std::make_shared<aspl::Driver>(context, plugin);
-  auto driverHandler = std::make_shared<DriverHandler>(context, plugin);
+  auto driverHandler = std::make_shared<DriverHandler>(
+      context, plugin, driver->GetStorage(), driverStatus);
   driver->SetDriverHandler(std::move(driverHandler));
 
   return driver;

@@ -246,11 +246,23 @@ ProxyDevice::~ProxyDevice() {
 }
 
 CFStringRef ProxyDevice::GetVersion() const {
-  // Return CFBundleShortVersionString from info.plist.
-  CFStringRef version = CFBundleCopyLocalizedString(
-      CFBundleGetMainBundle(), CFSTR("CFBundleVersion"), CFSTR(""), nullptr);
+  // The plug-in executes inside coreaudiod, so CFBundleGetMainBundle() would
+  // identify coreaudiod rather than ProxyAudio. Resolve our bundle explicitly.
+  auto* bundle =
+      CFBundleGetBundleWithIdentifier(CFSTR("com.TapTurtle.ProxyAudio"));
+  if (!bundle) {
+    return CFStringCreateWithCString(kCFAllocatorDefault, "",
+                                     kCFStringEncodingUTF8);
+  }
 
-  return version;
+  auto* version = CFBundleGetValueForInfoDictionaryKey(
+      bundle, CFSTR("CFBundleShortVersionString"));
+  if (!version || CFGetTypeID(version) != CFStringGetTypeID()) {
+    return CFStringCreateWithCString(kCFAllocatorDefault, "",
+                                     kCFStringEncodingUTF8);
+  }
+
+  return static_cast<CFStringRef>(CFRetain(version));
 }
 
 void ProxyDevice::AddProxyStreams() {

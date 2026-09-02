@@ -85,6 +85,17 @@ target_link_libraries(${DRIVER_NAME}
   PRIVATE ${LIB_CoreAudio}
 )
 
+# Keep the version identity reported over CoreAudio in lockstep with the
+# bundle metadata generated below. These values are used by the manager app to
+# identify the running driver; do not derive them from CFBundleGetMainBundle(),
+# which is coreaudiod when the plug-in is loaded.
+target_compile_definitions(${DRIVER_NAME}
+  PRIVATE
+    PROXY_AUDIO_DRIVER_IDENTIFIER="${DRIVER_IDENTIFIER}"
+    PROXY_AUDIO_DRIVER_VERSION="${DRIVER_VERSION}"
+    PROXY_AUDIO_DRIVER_BUILD_VERSION="${DRIVER_VERSION}"
+)
+
 # here we adjust properties of our shared library and ask CMake to pack it into
 # macOS bundle directory
 #
