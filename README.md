@@ -1,157 +1,94 @@
 # ProxyAudio
 
-ProxyAudio is a macOS CoreAudio plugin that creates virtual audio devices which proxy audio data and control commands to existing physical audio devices. Built with modern C++17 and leveraging the [libASPL](https://github.com/Devolutions/libASPL) framework, ProxyAudio provides a transparent passthrough layer that enables advanced audio processing, monitoring, and routing capabilities.
+ProxyAudio is a macOS Core Audio HAL plug-in that creates a virtual output device for each eligible physical output device. Each virtual device is named `<device name> (Proxy)` and forwards its audio, volume, mute, stream, and relevant device properties to its corresponding target.
 
-## Overview
+It is intended as a transparent layer for audio routing, monitoring, or further processing. The driver is implemented in C++17 on top of the bundled [libASPL](https://github.com/gavv/libASPL) submodule.
 
-ProxyAudio creates proxy devices that appear in macOS System Preferences as separate audio output devices. When audio is routed to a proxy device, it is buffered and then forwarded to the underlying physical device. This architecture enables:
+## How it works
 
-- **Transparent audio passthrough** with minimal latency overhead
-- **Volume and mute control** proxying with real-time processing
+The driver observes the system's output devices and creates or removes proxy devices as those targets appear and disappear. Proxy devices are excluded from discovery, so they are never proxied again.
 
-## Features
-
-### Core Functionality
-
-- **Device Proxying**: Creates virtual devices that mirror physical audio devices
-- **Stream Cloning**: Automatically clones all input and output streams from target devices
-- **Property Synchronization**: Maintains synchronized properties (sample rate, latency, etc.) with target devices
-- **Volume & Mute Controls**: Proxies volume and mute controls with real-time audio processing
-
-## Architecture
-
-### Proxy Pattern
-
-ProxyAudio uses a comprehensive proxy pattern to clone audio objects:
-
-- **ProxyDevice**: Proxies the physical audio device, cloning streams and controls
-- **ProxyStream**: Proxies audio streams, maintaining format and latency properties
-- **ProxyVolumeControl**: Proxies volume controls with real-time processing
-- **ProxyMuteControl**: Proxies mute controls with real-time processing
-- **ProxyProperty**: Generic property synchronization mechanism
-
-### I/O Architecture
-
-```
-┌─────────────────┐
-│  macOS HAL      │
-│  (Producer)     │
-└────────┬────────┘
-         │ OnWriteMixedOutput()
-         ▼
-┌─────────────────┐
-│  Ring Buffer    │  ◄── Adaptive Clock Control
-│  (audio frames) │     (maintains 50% fill)
-└────────┬────────┘
-         │ TargetIOProc()
-         ▼
-┌─────────────────┐
-│  Target Device  │
-│  (Consumer)     │
-└─────────────────┘
-```
-
-### Ring Buffer
-
-The ring buffer decouples the proxy device's I/O cycle from the target device's I/O cycle.
-
-### Adaptive Clock Control
-
-ProxyAudio implements an adaptive clock mechanism that steers the HAL's write rate by adjusting the reported device clock:
-
-- Buffer too full → Advance clock → HAL writes slower
-- Buffer too empty → Retard clock → HAL writes faster
+Audio written by an application to a proxy device is placed in a ring buffer and consumed by an I/O procedure on the target device. The buffer decouples the two I/O cycles. A clock adjustment keeps the buffer near its target fill level: when it is too full, the proxy reports a faster clock so HAL produces data more slowly; when it is too empty, it reports a slower clock so HAL produces data more quickly.
 
 ## Requirements
 
-- **macOS**: 10.9 or later (CoreAudio HAL plugin support)
-- **C++17**: Modern C++ standard required
-- **Xcode**: For building the project
-- **libASPL**: Included as a git submodule
+- macOS with the Core Audio development frameworks and command-line tools available
+- CMake and a C++17-capable compiler (normally supplied by Xcode or the Xcode Command Line Tools)
+- Git, including the `libASPL` submodule
 
-## Building
+The optional SwiftUI manager app targets macOS 13 or later. Building the driver does not require the manager app.
 
-ProxyAudio is built using CMake. The repository includes default build tasks for VSCode and derived editors.
+## Build
 
-1. **Clone the repository**:
-   ```bash
-   git clone --recurse-submodules https://github.com/kjvenalainen/ProxyAudio
-   cd ProxyAudio
-   ```
-
-2. **Build the project**:
-   ```bash
-   make [release|debug]
-   ```
-
-4. **Build artifacts**:
-   - The driver bundle will be created in the build directory.
-   - A symlink at `build/latest` points to the most recent build.
-   - `compile_commands.json` is generated in repo root for `clangd` support.
-
-## Installation
-
-After building, install the driver using the provided script:
+Clone the repository with its submodule:
 
 ```bash
-sudo ./script/install.sh
+git clone --recurse-submodules https://github.com/kjvenalainen/ProxyAudio.git
+cd ProxyAudio
 ```
 
-This script will:
-1. Validate that build products exist
-2. Copy the driver bundle to `/Library/Audio/Plug-Ins/HAL/`
-3. Restart the CoreAudio daemon
-
-**Note**: Installation requires administrator privileges. The CoreAudio daemon restart may briefly interrupt audio playback.
-
-### Manual Installation
-
-If you prefer manual installation:
+Then build either configuration:
 
 ```bash
-# Copy the driver bundle
-sudo cp -R build/latest /Library/Audio/Plug-Ins/HAL/
-
-# Restart CoreAudio
-sudo killall -9 coreaudiod
+make release  # default: make
+make debug
 ```
 
-## License
+The build produces the driver bundle at `build/ProxyAudio/<configuration>/ProxyAudio.driver`, updates `build/latest` to point to that bundle, and writes a repository-root `compile_commands.json` for language servers.
 
-MIT License
+To build and run the deterministic unit-test suite:
 
-Copyright (c) 2026 Tap Turtle
+```bash
+make test
+```
 
-See [LICENSE.txt](LICENSE.txt) for full license text.
+The test build fetches GoogleTest the first time it is configured.
 
-## Dependencies
+### Manager app
 
-- **libASPL**: Audio Server Plugin Library (included as submodule)
-  - License: MIT (see `libASPL/LICENSE`)
-  - Apple code portions: Apple 2012/2020 licenses (see `libASPL/LICENSE.apple*`)
+After building a driver, build the optional installer/status app with:
+
+```bash
+make app
+open build/ProxyAudioManager.app
+```
+
+The app embeds the bundle referenced by `build/latest`; build the desired Debug or Release driver first.
+
+## Install and remove
+
+Install the most recently built driver:
+
+```bash
+make install
+```
+
+The script validates `build/latest`, stops `coreaudiod`, replaces `/Library/Audio/Plug-Ins/HAL/ProxyAudio.driver`, and lets macOS restart the audio daemon. It prompts for administrator credentials. Audio playback will be interrupted while Core Audio restarts.
+
+Remove the installed driver:
+
+```bash
+make uninstall
+```
+
+`make uninstall` also requires the `build/latest` link so it can identify the installed bundle. If the build directory has been removed, delete `/Library/Audio/Plug-Ins/HAL/ProxyAudio.driver` manually with administrator privileges, then restart `coreaudiod`.
+
+## Development notes
+
+- `make clean` removes build products, generated documentation output, and `compile_commands.json`.
+- `make fmt` formats non-generated C++ source files with `clang-format`.
+- Local adjustments to the `libASPL` submodule are maintained as patches in [`patches/`](patches/README.md). The build applies them before building libASPL.
 
 ## Troubleshooting
 
-### Driver Not Appearing
+**No proxy device appears.** Confirm the bundle exists at `/Library/Audio/Plug-Ins/HAL/ProxyAudio.driver`, then wait briefly after installation or restart Core Audio. Inspect the system log with Console or `log stream` for messages from Core Audio and ProxyAudio.
 
-- Verify installation: Check `/Library/Audio/Plug-Ins/HAL/` for the driver bundle
-- Check logs: Use Console.app or `log stream` to view coreaudiod logs
-- Restart CoreAudio: `sudo killall -9 coreaudiod`
+**Audio drops out or has unexpected latency.** Check that the physical target device is working without ProxyAudio and reduce system load. The proxy ring buffer trades additional latency for decoupling of the virtual and physical device I/O cycles.
 
-### Audio Dropouts
+**A build cannot initialize libASPL.** Ensure the submodule is present with `git submodule update --init --recursive`, then consult the patch workflow in [`patches/README.md`](patches/README.md) if a local patch no longer applies.
 
-- Check buffer size: Larger buffers reduce dropouts but increase latency
-- Verify target device: Ensure target device is functioning correctly
-- Check system load: High CPU usage can cause I/O issues
+## License and dependencies
 
-### Device Not Found
+ProxyAudio is released under the [MIT License](LICENSE.txt).
 
-- Verify device name: Check exact device name in System Preferences → Sound
-- Check enumeration: Review logs to see which devices are found
-- Update configuration: Modify `Driver.cpp` to match your device names
-
-## See Also
-
-- [libASPL Documentation](https://github.com/Devolutions/libASPL)
-- [CoreAudio HAL Documentation](https://developer.apple.com/documentation/coreaudio)
-- [Audio Hardware Abstraction Layer](https://developer.apple.com/library/archive/documentation/MusicAudio/Conceptual/CoreAudioOverview/CoreAudioOverview.pdf)
+The bundled libASPL dependency has its own [license](libASPL/LICENSE) and includes Apple-licensed portions; see its [documentation](libASPL/README.md) for details.
