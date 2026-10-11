@@ -494,11 +494,7 @@ OSStatus ProxyDevice::OnStartIO() {
     return kAudioHardwareNotRunningError;
   }
 
-  // This is a temporary clock origin until the target invokes its first I/O
-  // callback. TargetIOProc then publishes the real sample-time-zero anchor.
-  const UInt64 startHostTime = CurrentHostTime();
-  zts_.store({.readTimestamp_ = startHostTime, .zeroTimestampPeriodIndex_ = 0},
-             std::memory_order_release);
+  zts_.store({}, std::memory_order_release);
   totalFramesRead_.store(0, std::memory_order_release);
   underrunCount_ = 0;
   ioProcCallCount_ = 0;
@@ -635,7 +631,14 @@ OSStatus ProxyDevice::GetZeroTimeStampImpl(UInt32 clientID,
                                            Float64* outSampleTime,
                                            UInt64* outHostTime,
                                            UInt64* outSeed) {
-  const auto zts = zts_.load(std::memory_order_acquire);
+  auto zts = zts_.load(std::memory_order_acquire);
+
+  // If the zts is uninitalized, we consider the first read to have happened
+  // right now. Once data actually starts flowing, the small timing inaccuracy
+  // should be ok and handled by a bit of buffering.
+  if (zts.readTimestamp_ == 0 && zts.zeroTimestampPeriodIndex_ == 0) {
+    zts = {.readTimestamp_ = CurrentHostTime(), .zeroTimestampPeriodIndex_ = 0};
+  }
 
   *outSampleTime = static_cast<Float64>(zts.zeroTimestampPeriodIndex_ *
                                         kProxyZeroTimeStampPeriod);
