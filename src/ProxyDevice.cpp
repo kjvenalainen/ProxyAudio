@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 
 #include "AudioObjectUtils.hpp"
@@ -70,16 +71,12 @@ aspl::DeviceParameters ProxyDevice::GetParameters(
     const AudioObjectID targetDeviceID,
     std::shared_ptr<const aspl::Context> context) {
   try {
-    const auto latency = ProxyAudio::GetPropertyData<UInt32>(
-        targetDeviceID,
-        {
-            .mSelector = kAudioDevicePropertyLatency,
-            .mScope = kAudioObjectPropertyScopeOutput,
-            .mElement = kAudioObjectPropertyElementMain,
-        },
-        {});
+    const auto latency = GetDeviceLatencySafely(targetDeviceID);
 
-    const auto latencyWithBuffer = latency + kRingBufferFrameCount;
+    const auto latencyWithBuffer =
+        latency > std::numeric_limits<UInt32>::max() - kRingBufferFrameCount
+            ? std::numeric_limits<UInt32>::max()
+            : latency + kRingBufferFrameCount;
 
     const auto deviceName = GetDeviceNameProperty(targetDeviceID);
     const auto deviceNameHash =
@@ -433,15 +430,13 @@ bool ProxyDevice::RefreshProxyStreams() {
             },
             {});
 
-    if (targetStreamIDs.size() !=
-        GetStreamCount(aspl::Direction::Output)) {
+    if (targetStreamIDs.size() != GetStreamCount(aspl::Direction::Output)) {
       return false;
     }
 
     for (size_t index = 0; index < targetStreamIDs.size(); ++index) {
-      auto stream = std::dynamic_pointer_cast<ProxyStream>(
-          GetStreamByIndex(aspl::Direction::Output,
-                           static_cast<UInt32>(index)));
+      auto stream = std::dynamic_pointer_cast<ProxyStream>(GetStreamByIndex(
+          aspl::Direction::Output, static_cast<UInt32>(index)));
       if (!stream || stream->GetTargetObjectID() != targetStreamIDs[index] ||
           stream->RefreshFromTarget() != noErr) {
         return false;
@@ -483,11 +478,19 @@ OSStatus ProxyDevice::OnStartIO() {
 
   // The ring buffer stores Float32 samples so that volume / mute processing
   // can operate in the float domain.  Verify the stream uses Float32.
-  if (!(format.mFormatFlags & kAudioFormatFlagIsFloat) ||
-      format.mBitsPerChannel != 32) {
+  const bool isCanonicalFloat =
+      format.mFormatID == kAudioFormatLinearPCM &&
+      (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0 &&
+      (format.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0 &&
+      format.mBitsPerChannel == 32 && format.mFramesPerPacket == 1 &&
+      format.mBytesPerFrame == outputChannelsPerFrame_ * sizeof(Float32) &&
+      format.mBytesPerPacket == format.mBytesPerFrame;
+  if (!isCanonicalFloat) {
     tracer->Message(
         Tracer::Error,
-        "ProxyDevice::OnStartIO() Output format is not 32-bit float");
+        "ProxyDevice::OnStartIO() Unsupported output format: %s. Expected "
+        "interleaved 32-bit float LPCM.",
+        ToString(format).c_str());
     return kAudioHardwareNotRunningError;
   }
 

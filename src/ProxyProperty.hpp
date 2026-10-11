@@ -102,7 +102,7 @@ class ProxyProperty {
     try {
       SetPropertyData(targetObjectID_, address_, {},
                       {
-                          .ptr = const_cast<ValueType*>(&value),
+                          .ptr = &value,
                           .size = sizeof(ValueType),
                       });
 
@@ -126,8 +126,21 @@ class ProxyProperty {
       UInt32 inNumberAddresses,
       const AudioObjectPropertyAddress* inAddresses,
       void* inClientData) {
-    static_cast<ProxyProperty*>(inClientData)
-        ->OnPropertyChanged(inObjectID, inNumberAddresses, inAddresses);
+    auto* property = static_cast<ProxyProperty*>(inClientData);
+    if (!property) {
+      return kAudioHardwareIllegalOperationError;
+    }
+
+    // CoreAudio invokes listeners through a C callback. Letting a C++
+    // exception escape this boundary terminates coreaudiod, so callback
+    // failures must be contained and recorded here.
+    try {
+      property->OnPropertyChanged(inObjectID, inNumberAddresses, inAddresses);
+    } catch (const std::exception& e) {
+      property->LogCallbackFailure(e.what());
+    } catch (...) {
+      property->LogCallbackFailure("unknown exception");
+    }
     return noErr;
   }
 
@@ -142,6 +155,18 @@ class ProxyProperty {
     const auto newValue = GetValue();
     if (newValue != getter_()) {
       setter_(newValue);
+    }
+  }
+
+  void LogCallbackFailure(const char* message) const noexcept {
+    try {
+      ProxyAudio::Tracer::FromTracer(context_->Tracer)
+          ->Message(ProxyAudio::Tracer::Error,
+                    "ProxyProperty:OnPropertyChanged() Failed to mirror %s: "
+                    "%s",
+                    ToString(address_).c_str(), message);
+    } catch (...) {
+      // A logging failure must not cross the CoreAudio callback boundary.
     }
   }
 

@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <future>
 #include <memory>
 #include <string>
@@ -153,6 +154,13 @@ class DriverStatus {
 
 class DriverHandler : public aspl::DriverRequestHandler {
  public:
+  // This lightweight constructor is used by the reconciliation tests. The
+  // production driver also supplies storage and status reporting below.
+  DriverHandler(std::shared_ptr<aspl::Context> context,
+                std::shared_ptr<aspl::Plugin> plugin)
+      : DriverHandler(std::move(context), std::move(plugin), nullptr, nullptr) {
+  }
+
   DriverHandler(std::shared_ptr<aspl::Context> context,
                 std::shared_ptr<aspl::Plugin> plugin,
                 std::shared_ptr<aspl::Storage> storage,
@@ -165,52 +173,85 @@ class DriverHandler : public aspl::DriverRequestHandler {
 
   // Invoked when HAL performs asynchrnous initialization.
   OSStatus OnInitialize() override {
-    driverStatus_->MarkInitialized();
-    if (!driverStatus_->WriteToStorage(storage_)) {
-      ProxyAudio::Tracer::FromTracer(context_->Tracer)
-          ->Message(ProxyAudio::Tracer::Warn,
-                    "DriverHandler:OnInitialize() Failed to write driver "
-                    "status to storage");
+    if (driverStatus_) {
+      driverStatus_->MarkInitialized();
+      if (storage_ && !driverStatus_->WriteToStorage(storage_)) {
+        ProxyAudio::Tracer::FromTracer(context_->Tracer)
+            ->Message(ProxyAudio::Tracer::Warn,
+                      "DriverHandler:OnInitialize() Failed to write driver "
+                      "status to storage");
+      }
     }
 
-    // Asynchronously add devices to the plugin. In this method the HAL is
-    // holding various locks that would cause a long delay if we were to do this
-    // synchronously.
-    ProxyAudio::DispatchAsync(^() {
-      static std::atomic<bool> isAddingDevices = true;
-      AddDevices(context_, plugin_);
-      isAddingDevices.store(false);
+    // Listen before the first scan so that a device change while the initial
+    // reconciliation is queued is coalesced into a follow-up scan instead of
+    // being silently lost.
+    onSystemAudioDevicesChanged_ =
+        std::make_unique<ProxyAudio::PropertyChangedNotifier>(
+            kAudioObjectSystemObject, context_,
+            AudioObjectPropertyAddress{
+                kAudioHardwarePropertyDevices,
+                kAudioObjectPropertyScopeGlobal,
+                kAudioObjectPropertyElementMain,
+            },
+            [context = context_, plugin = plugin_,
+             state = reconciliationState_]() {
+              ScheduleDeviceReconciliation(context, plugin, state);
+            });
 
-      onSystemAudioDevicesChanged_ =
-          std::make_unique<ProxyAudio::PropertyChangedNotifier>(
-              kAudioObjectSystemObject, context_,
-              AudioObjectPropertyAddress{
-                  kAudioHardwarePropertyDevices,
-                  kAudioObjectPropertyScopeGlobal,
-                  kAudioObjectPropertyElementMain,
-              },
-              [context = context_, plugin = plugin_]() {
-                if (isAddingDevices.exchange(true)) {
-                  ProxyAudio::Tracer::FromTracer(context->Tracer)
-                      ->Message(ProxyAudio::Tracer::Info,
-                                "DriverHandler:AddDevices(): Other "
-                                "thread is already "
-                                "adding devices, skipping.");
-
-                  return;
-                }
-
-                ProxyAudio::DispatchAsync(^() {
-                  AddDevices(context, plugin);
-                  isAddingDevices.store(false);
-                });
-              });
-    });
+    // HAL holds internal locks while this method executes; do the potentially
+    // slow hardware enumeration and device creation on a worker queue.
+    ScheduleDeviceReconciliation(context_, plugin_, reconciliationState_);
 
     return kAudioHardwareNoError;
   }
 
  private:
+  struct DeviceReconciliationState {
+    std::atomic<bool> isRunning{false};
+    std::atomic<bool> rescanRequested{false};
+  };
+
+  static void ScheduleDeviceReconciliation(
+      const std::shared_ptr<aspl::Context>& context,
+      const std::shared_ptr<aspl::Plugin>& plugin,
+      const std::shared_ptr<DeviceReconciliationState>& state) {
+    if (state->isRunning.exchange(true, std::memory_order_acq_rel)) {
+      state->rescanRequested.store(true, std::memory_order_release);
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(ProxyAudio::Tracer::Info,
+                    "DriverHandler:ScheduleDeviceReconciliation() "
+                    "coalescing a device-list change");
+      return;
+    }
+
+    ProxyAudio::DispatchAsync(^() {
+      try {
+        AddDevices(context, plugin);
+      } catch (const std::exception& e) {
+        ProxyAudio::Tracer::FromTracer(context->Tracer)
+            ->Message(ProxyAudio::Tracer::Error,
+                      "DriverHandler:ScheduleDeviceReconciliation() "
+                      "unexpected failure: %s",
+                      e.what());
+      } catch (...) {
+        ProxyAudio::Tracer::FromTracer(context->Tracer)
+            ->Message(ProxyAudio::Tracer::Error,
+                      "DriverHandler:ScheduleDeviceReconciliation() "
+                      "unknown failure");
+      }
+
+      state->isRunning.store(false, std::memory_order_release);
+      if (state->rescanRequested.exchange(false, std::memory_order_acq_rel)) {
+        ProxyAudio::Tracer::FromTracer(context->Tracer)
+            ->Message(ProxyAudio::Tracer::Info,
+                      "DriverHandler:ScheduleDeviceReconciliation() "
+                      "running coalesced device-list scan");
+        ScheduleDeviceReconciliation(context, plugin, state);
+      }
+    });
+  }
+
   static void AddDevices(std::shared_ptr<aspl::Context> context,
                          std::shared_ptr<aspl::Plugin> plugin) {
     const auto& tracer = ProxyAudio::Tracer::FromTracer(context->Tracer);
@@ -290,22 +331,22 @@ class DriverHandler : public aspl::DriverRequestHandler {
             continue;
           }
 
-          // Add all devices that have at least one output stream, and that
-          // don't have a volume+mute control.
-          auto outputStreamCount =
-              ProxyAudio::GetPropertyDataSize(
+          const auto outputStreams =
+              ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
                   deviceID,
                   {
                       .mSelector = kAudioDevicePropertyStreams,
                       .mScope = kAudioObjectPropertyScopeOutput,
                       .mElement = kAudioObjectPropertyElementMain,
                   },
-                  {}) /
-              sizeof(AudioObjectID);
+                  {});
 
-          // TODO: Make Proxy for all output devices.
-          if (outputStreamCount > 0 &&
-              (!DeviceHasVolumeAndMuteControl(deviceID, context) || true)) {
+          // The data path has one interleaved Float32 ring buffer. Do not
+          // expose a proxy for a target whose stream topology or format cannot
+          // be represented safely; a visible device that fails when selected
+          // is much harder to diagnose than an explicit compatibility log.
+          if (IsSupportedOutputConfiguration(deviceID, outputStreams,
+                                             context)) {
             tracer->Message(
                 ProxyAudio::Tracer::Info,
                 "DriverHandler:AddDevices(): Adding output device: %u - %s",
@@ -337,13 +378,25 @@ class DriverHandler : public aspl::DriverRequestHandler {
         }
 
         for (auto& future : proxyDevicesFutures) {
-          auto proxyDevice = future.get();
-          if (proxyDevice) {
-            plugin->AddDevice(std::move(proxyDevice), false);
+          try {
+            auto proxyDevice = future.get();
+            if (proxyDevice) {
+              plugin->AddDevice(std::move(proxyDevice), false);
+              changedDevices = true;
+            }
+          } catch (const std::exception& e) {
+            tracer->Message(
+                ProxyAudio::Tracer::Error,
+                "DriverHandler:AddDevices(): Failed to create a proxy device: "
+                "%s",
+                e.what());
+          } catch (...) {
+            tracer->Message(
+                ProxyAudio::Tracer::Error,
+                "DriverHandler:AddDevices(): Failed to create a proxy device "
+                "with an unknown error");
           }
         }
-
-        changedDevices = true;
       }
 
       if (changedDevices) {
@@ -358,44 +411,48 @@ class DriverHandler : public aspl::DriverRequestHandler {
     }
   }
 
-  static bool DeviceHasVolumeAndMuteControl(
+  static bool IsSupportedOutputConfiguration(
       AudioObjectID deviceID,
+      const std::vector<AudioObjectID>& outputStreams,
       std::shared_ptr<aspl::Context> context) {
-    try {
-      const auto controls =
-          ProxyAudio::GetPropertyData<std::vector<AudioObjectID>>(
-              deviceID,
-              {
-                  .mSelector = kAudioObjectPropertyControlList,
-                  .mScope = kAudioObjectPropertyScopeOutput,
-                  .mElement = kAudioObjectPropertyElementMain,
-              },
-              {});
-
-      bool hasVolumeControl =
-          ProxyAudio::GetControlId(kAudioVolumeControlClassID,
-                                   kAudioDevicePropertyScopeOutput,
-                                   controls) != kAudioObjectUnknown;
-      bool hasMuteControl =
-          ProxyAudio::GetControlId(kAudioMuteControlClassID,
-                                   kAudioDevicePropertyScopeOutput,
-                                   controls) != kAudioObjectUnknown;
-
-      return hasVolumeControl && hasMuteControl;
-    } catch (const ProxyAudio::OSStatusError& e) {
-      ProxyAudio::Tracer::FromTracer(context->Tracer)
-          ->Message(ProxyAudio::Tracer::Error,
-                    "DriverHandler:DeviceHasVolumeAndMuteControl(): Failed to "
-                    "get controls: %s",
-                    e.what());
+    const auto tracer = ProxyAudio::Tracer::FromTracer(context->Tracer);
+    if (outputStreams.size() != 1) {
+      tracer->Message(
+          ProxyAudio::Tracer::Warn,
+          "DriverHandler:IsSupportedOutputConfiguration() Skipping device "
+          "%u: expected one output stream, found %zu",
+          deviceID, outputStreams.size());
       return false;
     }
+
+    const auto format = ProxyAudio::GetFormatProperty(outputStreams.front());
+    const bool isCanonicalFloat =
+        format.mFormatID == kAudioFormatLinearPCM &&
+        (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0 &&
+        (format.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0 &&
+        format.mBitsPerChannel == 32 && format.mFramesPerPacket == 1 &&
+        format.mChannelsPerFrame > 0 &&
+        format.mBytesPerFrame == format.mChannelsPerFrame * sizeof(Float32) &&
+        format.mBytesPerPacket == format.mBytesPerFrame;
+    if (!isCanonicalFloat) {
+      ProxyAudio::Tracer::FromTracer(context->Tracer)
+          ->Message(ProxyAudio::Tracer::Warn,
+                    "DriverHandler:IsSupportedOutputConfiguration() Skipping "
+                    "device %u: unsupported output format %s; expected "
+                    "interleaved 32-bit float LPCM",
+                    deviceID, ProxyAudio::ToString(format).c_str());
+      return false;
+    }
+
+    return true;
   }
 
   std::shared_ptr<aspl::Context> context_;
   std::shared_ptr<aspl::Plugin> plugin_;
   std::shared_ptr<aspl::Storage> storage_;
   std::shared_ptr<DriverStatus> driverStatus_;
+  std::shared_ptr<DeviceReconciliationState> reconciliationState_ =
+      std::make_shared<DeviceReconciliationState>();
   std::unique_ptr<ProxyAudio::PropertyChangedNotifier>
       onSystemAudioDevicesChanged_;
 };

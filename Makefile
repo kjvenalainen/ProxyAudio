@@ -76,6 +76,7 @@ uninstall:
 	bash script/uninstall.sh
 
 # Manager app
+.PHONY: app app-clean
 APP_NAME = ProxyAudioManager
 APP_BUNDLE = build/$(APP_NAME).app
 APP_SOURCES = $(wildcard app/*.swift)

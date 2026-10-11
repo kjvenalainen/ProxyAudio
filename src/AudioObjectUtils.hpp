@@ -19,7 +19,7 @@ namespace ProxyAudio {
 // A pointer and size pair, often used to pass data to and from CoreAudio
 // functions.
 struct SizedPtr {
-  void* ptr = nullptr;
+  const void* ptr = nullptr;
   uint32_t size = 0;
 };
 
@@ -129,6 +129,10 @@ Result GetPropertyData(AudioObjectID objectID,
     return std::vector<typename Result::value_type>();
   }
 
+  if (size % sizeof(typename Result::value_type) != 0U) {
+    throw OSStatusError(kAudioHardwareBadPropertySizeError, address);
+  }
+
   size_t count = size / sizeof(typename Result::value_type);
   Result outputData(count);
   auto result =
@@ -137,6 +141,10 @@ Result GetPropertyData(AudioObjectID objectID,
 
   if (result != noErr) {
     throw OSStatusError(result, address);
+  }
+
+  if (size % sizeof(typename Result::value_type) != 0U) {
+    throw OSStatusError(kAudioHardwareBadPropertySizeError, address);
   }
 
   if (size != count * sizeof(typename Result::value_type)) {

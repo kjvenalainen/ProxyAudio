@@ -4,8 +4,6 @@
 // DriverHandler intentionally remains private production wiring. Including the
 // source here keeps the production file untouched while making that wiring
 // testable in this one translation unit.
-#include "../src/Driver.cpp"
-
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -13,6 +11,18 @@
 #include <string>
 #include <vector>
 
+// Driver.cpp normally receives these from the generated CMake target. This
+// scenario test includes it directly in a separate test target.
+#ifndef PROXY_AUDIO_DRIVER_IDENTIFIER
+#define PROXY_AUDIO_DRIVER_IDENTIFIER "com.TapTurtle.ProxyAudio"
+#endif
+#ifndef PROXY_AUDIO_DRIVER_VERSION
+#define PROXY_AUDIO_DRIVER_VERSION "1.0.0"
+#endif
+#ifndef PROXY_AUDIO_DRIVER_BUILD_VERSION
+#define PROXY_AUDIO_DRIVER_BUILD_VERSION "1.0.0"
+#endif
+#include "../src/Driver.cpp"
 #include "ProxyVolumeControl.hpp"
 #include "TestSupport.hpp"
 
@@ -91,9 +101,8 @@ TEST(HealthyBaselineScenarioTest, ReconcilesAndRunsTheSuppliedLogPattern) {
     for (UInt32 index = 0; index < plugin->GetDeviceCount(); ++index) {
       const auto proxy = plugin->GetDeviceByIndex(index);
       publishedDevices.push_back(proxy->GetID());
-      scenario.hardware.SetString(proxy->GetID(),
-                                  Address(kAudioObjectPropertyName),
-                                  proxy->GetName());
+      scenario.hardware.SetString(
+          proxy->GetID(), Address(kAudioObjectPropertyName), proxy->GetName());
       scenario.hardware.SetString(proxy->GetID(),
                                   Address(kAudioDevicePropertyDeviceUID),
                                   proxy->GetDeviceUID());
@@ -136,8 +145,7 @@ TEST(HealthyBaselineScenarioTest, ReconcilesAndRunsTheSuppliedLogPattern) {
           static_cast<UInt32>(samples.size() * sizeof(Float32)));
       const auto playback = scenario.hardware.InvokeCurrentIOProc(
           scenario.DeviceID("speaker"), {3, 5});
-      EXPECT_EQ(playback.buffers[0],
-                (std::vector<Float32>{0.1f, -0.1f, 0.2f}));
+      EXPECT_EQ(playback.buffers[0], (std::vector<Float32>{0.1f, -0.1f, 0.2f}));
       EXPECT_EQ(playback.buffers[1],
                 (std::vector<Float32>{-0.2f, 0.3f, -0.3f, 0.4f, -0.4f}));
       EXPECT_GT(ProxyDeviceTestAccess::Underruns(*proxy), 0u);
@@ -168,15 +176,15 @@ TEST(HealthyBaselineScenarioTest, ReconcilesAndRunsTheSuppliedLogPattern) {
 
     runSession();
 
-    EXPECT_EQ(scenario.hardware.CallCount(
-                  FakeAudioHardware::Operation::CreateIOProc),
-              2u);
-    EXPECT_EQ(scenario.hardware.CallCount(
-                  FakeAudioHardware::Operation::StartIOProc),
-              2u);
-    EXPECT_EQ(scenario.hardware.CallCount(
-                  FakeAudioHardware::Operation::StopIOProc),
-              2u);
+    EXPECT_EQ(
+        scenario.hardware.CallCount(FakeAudioHardware::Operation::CreateIOProc),
+        2u);
+    EXPECT_EQ(
+        scenario.hardware.CallCount(FakeAudioHardware::Operation::StartIOProc),
+        2u);
+    EXPECT_EQ(
+        scenario.hardware.CallCount(FakeAudioHardware::Operation::StopIOProc),
+        2u);
     EXPECT_EQ(scenario.hardware.CallCount(
                   FakeAudioHardware::Operation::DestroyIOProc),
               2u);
@@ -202,11 +210,89 @@ TEST(DriverReconciliationTest, MalformedDeviceDoesNotBlockEligibleDevices) {
     ASSERT_EQ(handler.OnInitialize(), noErr);
     scenario.dispatch.DrainAll();
     ASSERT_EQ(plugin->GetDeviceCount(), 1u);
-    EXPECT_EQ(std::dynamic_pointer_cast<ProxyDevice>(
-                  plugin->GetDeviceByIndex(0))
-                  ->GetTargetObjectID(),
-              scenario.DeviceID("valid"));
+    EXPECT_EQ(
+        std::dynamic_pointer_cast<ProxyDevice>(plugin->GetDeviceByIndex(0))
+            ->GetTargetObjectID(),
+        scenario.DeviceID("valid"));
     EXPECT_EQ(host.NotificationCount(plugin->GetID()), 1u);
+  }
+  scenario.context->Host = nullptr;
+}
+
+TEST(DriverReconciliationTest, CoalescesChangesRaisedDuringAnActiveScan) {
+  ProxyAudioScenario scenario;
+  auto plugin = std::make_shared<aspl::Plugin>(scenario.context);
+  scenario.AddDevice("speaker");
+  scenario.SetSystemDevices({"speaker"});
+
+  FakePluginHost host;
+  scenario.context->Host = host.Ref();
+  {
+    DriverHandler handler(scenario.context, plugin);
+    ASSERT_EQ(handler.OnInitialize(), noErr);
+    ASSERT_EQ(scenario.dispatch.Pending(), 1u);
+
+    // The listener is installed before the initial worker runs. The
+    // notification therefore requests a follow-up reconciliation rather than
+    // being lost while the first scan is pending.
+    scenario.hardware.Notify(kAudioObjectSystemObject,
+                             Address(kAudioHardwarePropertyDevices));
+    scenario.dispatch.DrainAll();
+
+    ASSERT_EQ(plugin->GetDeviceCount(), 1u);
+    EXPECT_EQ(host.NotificationCount(plugin->GetID()), 1u);
+  }
+  scenario.context->Host = nullptr;
+}
+
+TEST(DriverReconciliationTest, SkipsOutputFormatsTheRingBufferCannotSafelyRun) {
+  ProxyAudioScenario scenario;
+  auto plugin = std::make_shared<aspl::Plugin>(scenario.context);
+  scenario.AddDevice("supported");
+  scenario.AddDevice("integer");
+
+  auto integerFormat = Float32Format();
+  integerFormat.mFormatFlags =
+      kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+  scenario.hardware.Set(scenario.StreamID("integer"),
+                        Address(kAudioStreamPropertyVirtualFormat),
+                        integerFormat);
+  scenario.SetSystemDevices({"supported", "integer"});
+
+  FakePluginHost host;
+  scenario.context->Host = host.Ref();
+  {
+    DriverHandler handler(scenario.context, plugin);
+    ASSERT_EQ(handler.OnInitialize(), noErr);
+    scenario.dispatch.DrainAll();
+
+    ASSERT_EQ(plugin->GetDeviceCount(), 1u);
+    EXPECT_EQ(
+        std::dynamic_pointer_cast<ProxyDevice>(plugin->GetDeviceByIndex(0))
+            ->GetTargetObjectID(),
+        scenario.DeviceID("supported"));
+  }
+  scenario.context->Host = nullptr;
+}
+
+TEST(DriverReconciliationTest, DoesNotPublishAChangeWhenProxyCreationFails) {
+  ProxyAudioScenario scenario;
+  auto plugin = std::make_shared<aspl::Plugin>(scenario.context);
+  scenario.AddDevice("broken");
+  scenario.hardware.Erase(scenario.DeviceID("broken"),
+                          Address(kAudioObjectPropertyControlList,
+                                  kAudioObjectPropertyScopeOutput));
+  scenario.SetSystemDevices({"broken"});
+
+  FakePluginHost host;
+  scenario.context->Host = host.Ref();
+  {
+    DriverHandler handler(scenario.context, plugin);
+    ASSERT_EQ(handler.OnInitialize(), noErr);
+    scenario.dispatch.DrainAll();
+
+    EXPECT_EQ(plugin->GetDeviceCount(), 0u);
+    EXPECT_EQ(host.NotificationCount(plugin->GetID()), 0u);
   }
   scenario.context->Host = nullptr;
 }

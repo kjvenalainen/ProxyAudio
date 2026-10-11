@@ -68,8 +68,20 @@ class PropertyChangedNotifier {
       UInt32 inNumberAddresses,
       const AudioObjectPropertyAddress* inAddresses,
       void* inClientData) {
-    static_cast<PropertyChangedNotifier*>(inClientData)
-        ->OnPropertyChanged(inObjectID, inNumberAddresses, inAddresses);
+    auto* notifier = static_cast<PropertyChangedNotifier*>(inClientData);
+    if (!notifier) {
+      return kAudioHardwareIllegalOperationError;
+    }
+
+    // This callback is entered from CoreAudio C code. A callback exception
+    // must not be allowed to unwind into coreaudiod.
+    try {
+      notifier->OnPropertyChanged(inObjectID, inNumberAddresses, inAddresses);
+    } catch (const std::exception& e) {
+      notifier->LogCallbackFailure(e.what());
+    } catch (...) {
+      notifier->LogCallbackFailure("unknown exception");
+    }
     return noErr;
   }
 
@@ -82,6 +94,18 @@ class PropertyChangedNotifier {
             "PropertyChangedNotifier:OnPropertyChanged() %u properties changed",
             inNumberAddresses);
     callback_();
+  }
+
+  void LogCallbackFailure(const char* message) const noexcept {
+    try {
+      ProxyAudio::Tracer::FromTracer(context_->Tracer)
+          ->Message(ProxyAudio::Tracer::Error,
+                    "PropertyChangedNotifier:OnPropertyChanged() Callback "
+                    "failed for %s: %s",
+                    ToString(address_).c_str(), message);
+    } catch (...) {
+      // A logging failure must not cross the CoreAudio callback boundary.
+    }
   }
 
   void RegisterPropertyChangeCallback() {

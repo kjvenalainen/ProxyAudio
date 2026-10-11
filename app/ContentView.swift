@@ -129,10 +129,14 @@ struct ContentView: View {
         }
         isProcessing = true
         let cmds = [
-            "rm -rf '\(halPath)'",
-            "cp -R '\(source)' '\(halPath)'",
-            "chown -R root:wheel '\(halPath)'",
-            "killall -9 coreaudiod 2>/dev/null || true"
+            // Stop CoreAudio before replacing the bundle. Reusing an inode
+            // belonging to a loaded signed bundle can leave a stale code-sign
+            // association and prevent the updated driver from loading.
+            "(killall -9 coreaudiod 2>/dev/null || true)",
+            "rm -rf \(shellQuote(halPath))",
+            "cp -R \(shellQuote(source)) \(shellQuote(halPath))",
+            "chown -R root:wheel \(shellQuote(halPath))",
+            "(killall -9 coreaudiod 2>/dev/null || true)"
         ].joined(separator: " && ")
         runPrivileged(cmds)
     }
@@ -140,8 +144,9 @@ struct ContentView: View {
     private func performUninstall() {
         isProcessing = true
         let cmds = [
-            "rm -rf '\(halPath)'",
-            "killall -9 coreaudiod 2>/dev/null || true"
+            "(killall -9 coreaudiod 2>/dev/null || true)",
+            "rm -rf \(shellQuote(halPath))",
+            "(killall -9 coreaudiod 2>/dev/null || true)"
         ].joined(separator: " && ")
         runPrivileged(cmds)
     }
@@ -155,7 +160,12 @@ struct ContentView: View {
             .replacingOccurrences(of: "\"", with: "\\\"")
         let source = "do shell script \"\(escaped)\" with administrator privileges"
         var error: NSDictionary?
-        NSAppleScript(source: source)?.executeAndReturnError(&error)
+        guard let script = NSAppleScript(source: source) else {
+            isProcessing = false
+            errorMessage = "Could not prepare the privileged installation command."
+            return
+        }
+        script.executeAndReturnError(&error)
 
         if let error = error {
             let msg = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
@@ -168,6 +178,14 @@ struct ContentView: View {
             isProcessing = false
             refreshStatus()
         }
+    }
+
+    // Quote one argument for the POSIX shell used by `do shell script`.
+    // The embedded driver path can contain spaces or apostrophes when the app
+    // is launched from an arbitrary folder, so interpolation without this
+    // quoting would both fail and permit command injection as administrator.
+    private func shellQuote(_ argument: String) -> String {
+        "'\(argument.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
 
@@ -239,7 +257,7 @@ private func audioPluginID(bundleIdentifier: String) -> AudioObjectID? {
     var inputBundleIdentifier = bundleIdentifier as CFString
     var pluginID = AudioObjectID(kAudioObjectUnknown)
 
-    return withUnsafeMutablePointer(to: &inputBundleIdentifier) { inputPointer in
+    let status: OSStatus = withUnsafeMutablePointer(to: &inputBundleIdentifier) { inputPointer in
         withUnsafeMutablePointer(to: &pluginID) { outputPointer in
             var translation = AudioValueTranslation(
                 mInputData: inputPointer,
@@ -248,17 +266,19 @@ private func audioPluginID(bundleIdentifier: String) -> AudioObjectID? {
                 mOutputDataSize: UInt32(MemoryLayout<AudioObjectID>.size)
             )
             var dataSize = UInt32(MemoryLayout<AudioValueTranslation>.size)
-            let status = AudioObjectGetPropertyData(
+            return AudioObjectGetPropertyData(
                 AudioObjectID(kAudioObjectSystemObject),
                 &propertyAddress,
                 0, nil,
                 &dataSize,
                 &translation
             )
-            if status == noErr, pluginID != AudioObjectID(kAudioObjectUnknown) {
-                return pluginID
-            }
-            return nil
         }
     }
+
+    guard status == noErr,
+          pluginID != AudioObjectID(kAudioObjectUnknown) else {
+        return nil
+    }
+    return pluginID
 }

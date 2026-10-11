@@ -34,8 +34,7 @@ TEST(ProxyPropertyTest, ReadsWritesUpdatesAndSuppressesUnchangedCallbacks) {
 
     EXPECT_DOUBLE_EQ(property.GetValue(), 48000);
     property.SetValue(44100);
-    EXPECT_DOUBLE_EQ(scenario.hardware.Value<Float64>(kObject, address),
-                     44100);
+    EXPECT_DOUBLE_EQ(scenario.hardware.Value<Float64>(kObject, address), 44100);
 
     scenario.hardware.Notify(kObject, address);
     EXPECT_DOUBLE_EQ(mirroredValue, 44100);
@@ -57,10 +56,10 @@ TEST(ProxyPropertyTest, ReportsCoreAudioFailuresAndCleansUpBestEffort) {
 
   scenario.hardware.FailNext(FakeAudioHardware::Operation::AddListener,
                              kAudioHardwareUnspecifiedError, kObject, address);
-  EXPECT_THROW(
-      (ProxyProperty<Float64>(kObject, scenario.context, address,
-                              [](const Float64&) {}, []() { return 0.0; })),
-      OSStatusError);
+  EXPECT_THROW((ProxyProperty<Float64>(
+                   kObject, scenario.context, address, [](const Float64&) {},
+                   []() { return 0.0; })),
+               OSStatusError);
   EXPECT_EQ(scenario.hardware.ListenerCount(), 0u);
 
   {
@@ -76,13 +75,29 @@ TEST(ProxyPropertyTest, ReportsCoreAudioFailuresAndCleansUpBestEffort) {
                                kAudioHardwareIllegalOperationError, kObject,
                                address);
     EXPECT_THROW(property.SetValue(96000), OSStatusError);
-
   }
 
   EXPECT_EQ(scenario.hardware.ListenerCount(kObject, address), 0u);
   EXPECT_EQ(
       scenario.hardware.CallCount(FakeAudioHardware::Operation::RemoveListener),
       1u);
+}
+
+TEST(ProxyPropertyTest, ListenerFailuresDoNotEscapeCoreAudioCallbacks) {
+  ProxyAudioScenario scenario;
+  constexpr AudioObjectID kObject = 44;
+  const auto address = Address(kAudioDevicePropertyNominalSampleRate);
+  scenario.hardware.Set<Float64>(kObject, address, 48000);
+
+  size_t setterCalls = 0;
+  ProxyProperty<Float64> property(
+      kObject, scenario.context, address,
+      [&](const Float64&) { ++setterCalls; }, []() { return 44100.0; });
+
+  scenario.hardware.FailNext(FakeAudioHardware::Operation::GetSize,
+                             kAudioHardwareBadObjectError, kObject, address);
+  EXPECT_NO_THROW(scenario.hardware.Notify(kObject, address));
+  EXPECT_EQ(setterCalls, 0u);
 }
 
 TEST(ProxyControlsTest, VolumePropagatesBothWaysWithinCaptureTolerance) {
